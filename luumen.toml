@@ -10,3 +10,6 @@ dev = 'rojo serve default.project.json'
 format = 'stylua src'
 lint = 'selene src'
 test = 'lune run test'
+
+[tasks]
+install = ['cd packages/fusion-router && luu install', 'luu install']
