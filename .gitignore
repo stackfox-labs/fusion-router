@@ -12,3 +12,16 @@ profile.svg
 
 # Time trace
 trace.json
+
+# Luau language server
+sourcemap.json
+
+# Roblox
+*.rbxl
+*.rbxlx
+
+# Visual Studio Code
+.vscode/
+
+# JetBrains IDEs
+.idea/
