@@ -8,6 +8,7 @@ local cases: { TestCase } = {
     require("./packages/fusion-router/test/ModalDefinitionSpec"),
     require("./packages/fusion-router/test/OverlayDefinitionSpec"),
     require("./packages/fusion-router/test/ScreenDefinitionSpec"),
+    require("./packages/fusion-router/test/ValidationHelpersSpec"),
 }
 
 local passed = 0
