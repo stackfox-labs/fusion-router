@@ -7,8 +7,8 @@ tools = true
 [commands]
 build = 'rojo build default.project.json --output build.rbxl'
 dev = 'rojo serve default.project.json'
-format = 'stylua src'
-lint = 'selene src'
+format = 'stylua packages/fusion-router/src packages/fusion-router/test test.luau'
+lint = 'selene packages/fusion-router/src packages/fusion-router/test test.luau'
 test = 'lune run test'
 
 [tasks]
