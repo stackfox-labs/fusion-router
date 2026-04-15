@@ -80,6 +80,19 @@ function Validation.expectOptionalFunction(subject, value, label, level)
     end
 end
 
+function Validation.expectNonEmptyString(subject, value, label, level)
+    if type(value) ~= "string" or value == "" then
+        raise(
+            ("%s expected %s to be a non-empty string, got %s"):format(
+                subject,
+                label,
+                valueType(value)
+            ),
+            level or 1
+        )
+    end
+end
+
 function Validation.expectOptionalEnumString(
     subject,
     value,
@@ -98,15 +111,7 @@ function Validation.expectOptionalEnumString(
 end
 
 function Validation.expectRouteName(subject, routeName, level)
-    if type(routeName) ~= "string" or routeName == "" then
-        raise(
-            ("%s expected route name to be a non-empty string, got %s"):format(
-                subject,
-                valueType(routeName)
-            ),
-            level or 1
-        )
-    end
+    Validation.expectNonEmptyString(subject, routeName, "route name", (level or 1) + 1)
 end
 
 function Validation.expectRouteMap(subject, routeMap, label, expectedKind, level)
