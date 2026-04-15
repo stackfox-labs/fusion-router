@@ -5,6 +5,7 @@ type TestCase = {
 
 local cases: { TestCase } = {
     require("./packages/fusion-router/test/SmokeSpec"),
+    require("./packages/fusion-router/test/ScreenDefinitionSpec"),
 }
 
 local passed = 0
