@@ -24,6 +24,8 @@ local cases: { TestCase } = {
     require("./packages/fusion-router/test/ModalDefinitionSpec"),
     require("./packages/fusion-router/test/OverlayDefinitionSpec"),
     require("./packages/fusion-router/test/OverlayRuntimeSpec"),
+    require("./packages/fusion-router/test/AppRenderSpec"),
+    require("./packages/fusion-router/test/TransitionRenderSpec"),
     require("./packages/fusion-router/test/RouteContextSpec"),
     require("./packages/fusion-router/test/ScreenDefinitionSpec"),
     require("./packages/fusion-router/test/ScopeOwnerSpec"),

@@ -3,6 +3,14 @@ local Validation = require("../shared/validation")
 local createRuntimeKeyGenerator = require("./keyGenerator")
 local createRouteContext = require("./routeContext")
 
+local TRANSITION_DURATIONS = {
+    fade = 0.18,
+    slideLeft = 0.24,
+    slideRight = 0.24,
+    fadeScaleIn = 0.2,
+    fadeOut = 0.18,
+}
+
 type RouterDeps = {
     createRuntimeKeyGenerator: ((
     ) -> {
@@ -12,6 +20,7 @@ type RouterDeps = {
     createRouteContext: ((entry: any, router: any, isActive: any) -> any)?,
     createScopeOwner: ((fusion: any?) -> any)?,
     fusion: any?,
+    scheduler: any?,
 }
 
 local function validateParams(subject, params)
@@ -151,6 +160,10 @@ local function runLifecycleHook(hook, context)
     end
 end
 
+local function getTransitionDuration(presetName)
+    return TRANSITION_DURATIONS[presetName] or 0.2
+end
+
 local function createRouter(config, deps: RouterDeps?)
     Validation.validateRouterConfig(config)
 
@@ -175,6 +188,8 @@ local function createRouter(config, deps: RouterDeps?)
         screenStack = {},
         modalStack = {},
         overlayEntries = {},
+        exitingScreens = {},
+        exitingModals = {},
         retainedScreens = {},
         currentTransition = nil,
     }
@@ -184,10 +199,47 @@ local function createRouter(config, deps: RouterDeps?)
     local router = {
         _registries = registries,
         _runtime = {
+            appBinding = nil,
             keyGenerator = keyGenerator,
+            listeners = {},
+            scheduler = resolvedDeps.scheduler,
         },
         _state = state,
     }
+
+    local function notifyStateChanged()
+        for _, listener in router._runtime.listeners do
+            listener()
+        end
+    end
+
+    function router._runtime.subscribe(listener)
+        Validation.expectFunction("Router._runtime.subscribe", listener, "listener", 1)
+
+        table.insert(router._runtime.listeners, listener)
+
+        return function()
+            local index = table.find(router._runtime.listeners, listener)
+
+            if index ~= nil then
+                table.remove(router._runtime.listeners, index)
+            end
+        end
+    end
+
+    function router._runtime.bindApp(binding)
+        Validation.expectTableOrNil("Router._runtime.bindApp", binding, "binding", 1)
+
+        router._runtime.appBinding = binding
+        notifyStateChanged()
+
+        return function()
+            if router._runtime.appBinding == binding then
+                router._runtime.appBinding = nil
+                notifyStateChanged()
+            end
+        end
+    end
 
     local screenRouteKinds = {
         modal = registries.modals,
@@ -220,6 +272,126 @@ local function createRouter(config, deps: RouterDeps?)
         end
 
         return context
+    end
+
+    local function getBoundScheduler()
+        local appBinding = router._runtime.appBinding
+
+        if appBinding ~= nil and type(appBinding.scheduler) == "table" then
+            return appBinding.scheduler
+        end
+
+        return router._runtime.scheduler
+    end
+
+    local function hasBoundApp()
+        return router._runtime.appBinding ~= nil
+    end
+
+    local function removeTrackedEntry(list, entry)
+        local index = table.find(list, entry)
+
+        if index ~= nil then
+            table.remove(list, index)
+        end
+    end
+
+    local function cancelPendingTransition(entry)
+        local transitionHandle = entry._transitionHandle
+        local scheduler = getBoundScheduler()
+
+        if
+            transitionHandle ~= nil
+            and scheduler ~= nil
+            and type(scheduler.cancel) == "function"
+        then
+            scheduler.cancel(transitionHandle)
+        end
+
+        entry._transitionHandle = nil
+        entry._transitionToken = (entry._transitionToken or 0) + 1
+        entry.transition = nil
+    end
+
+    local function scheduleTransition(entry, presetName, phase, onComplete)
+        local scheduler = getBoundScheduler()
+
+        cancelPendingTransition(entry)
+
+        if
+            presetName == nil
+            or not hasBoundApp()
+            or scheduler == nil
+            or type(scheduler.delay) ~= "function"
+        then
+            entry.transition = nil
+            onComplete()
+            notifyStateChanged()
+
+            return false
+        end
+
+        local transitionToken = (entry._transitionToken or 0) + 1
+        local duration = getTransitionDuration(presetName)
+
+        entry._transitionToken = transitionToken
+        entry.transition = {
+            duration = duration,
+            name = presetName,
+            phase = phase,
+        }
+        entry._transitionHandle = scheduler.delay(duration, function()
+            if entry._transitionToken ~= transitionToken then
+                return
+            end
+
+            entry._transitionHandle = nil
+            entry.transition = nil
+            onComplete()
+            notifyStateChanged()
+        end)
+
+        notifyStateChanged()
+
+        return true
+    end
+
+    local function resolveScreenEnterTransition(definition)
+        return definition.enterTransition or registries.transitions.screenPush
+    end
+
+    local function resolveScreenExitTransition(definition, defaultTransition)
+        return definition.exitTransition or defaultTransition
+    end
+
+    local function trackExitingScreen(entry, presetName, finalizer)
+        table.insert(state.exitingScreens, entry)
+        entry.state = "exiting"
+        setEntryActive(entry, false)
+
+        local completed = scheduleTransition(entry, presetName, "exiting", function()
+            removeTrackedEntry(state.exitingScreens, entry)
+            finalizer()
+        end)
+
+        if not completed then
+            removeTrackedEntry(state.exitingScreens, entry)
+        end
+    end
+
+    local function trackExitingModal(entry, presetName, finalizer)
+        table.insert(state.exitingModals, entry)
+        entry.state = "exiting"
+        setEntryActive(entry, false)
+
+        local completed = scheduleTransition(entry, presetName, "exiting", function()
+            removeTrackedEntry(state.exitingModals, entry)
+            finalizer()
+        end)
+
+        if not completed then
+            removeTrackedEntry(state.exitingModals, entry)
+        end
     end
 
     local function removeKeepAliveEntry(entry)
@@ -420,6 +592,50 @@ local function createRouter(config, deps: RouterDeps?)
         return entry
     end
 
+    local function beginScreenEnterTransition(entry)
+        local presetName = resolveScreenEnterTransition(entry.definition)
+
+        if hasBoundApp() then
+            state.currentTransition = presetName
+        end
+
+        if presetName == nil or not hasBoundApp() then
+            entry.state = "active"
+            setEntryActive(entry, true)
+            notifyStateChanged()
+
+            return
+        end
+
+        entry.state = "entering"
+        setEntryActive(entry, true)
+        scheduleTransition(entry, presetName, "entering", function()
+            entry.state = "active"
+            setEntryActive(entry, true)
+        end)
+    end
+
+    local function beginModalEnterTransition(entry)
+        local presetName = entry.definition.transition or registries.transitions.modalOpen
+
+        state.currentTransition = presetName
+
+        if presetName == nil or not hasBoundApp() then
+            entry.state = "active"
+            setEntryActive(entry, true)
+            notifyStateChanged()
+
+            return
+        end
+
+        entry.state = "entering"
+        setEntryActive(entry, true)
+        scheduleTransition(entry, presetName, "entering", function()
+            entry.state = "active"
+            setEntryActive(entry, true)
+        end)
+    end
+
     local function resolveOverlayVisibility(entry)
         local visibleSource = entry.visible
 
@@ -514,6 +730,7 @@ local function createRouter(config, deps: RouterDeps?)
         end
 
         setEntryActive(entry, entry.isMounted and isVisible)
+        notifyStateChanged()
 
         return entry
     end
@@ -536,6 +753,8 @@ local function createRouter(config, deps: RouterDeps?)
             syncOverlayEntry(entry)
             table.insert(state.overlayEntries, entry)
         end
+
+        notifyStateChanged()
     end
 
     local function restoreScreenState(entry, snapshot)
@@ -558,9 +777,12 @@ local function createRouter(config, deps: RouterDeps?)
         local nextModal = state.modalStack[#state.modalStack]
 
         if nextModal ~= nil then
+            cancelPendingTransition(nextModal)
             nextModal.state = "active"
             setEntryActive(nextModal, true)
         end
+
+        notifyStateChanged()
 
         return nextModal
     end
@@ -579,16 +801,26 @@ local function createRouter(config, deps: RouterDeps?)
             return nil
         end
 
-        state.currentTransition = currentModal.definition.transition
+        local closeTransition = currentModal.definition.transition
             or registries.transitions.modalClose
 
-        local closedModal = table.remove(state.modalStack)
+        state.currentTransition = closeTransition
 
-        closedModal.state = "exiting"
-        setEntryActive(closedModal, false)
+        local closedModal = table.remove(state.modalStack)
         runLifecycleHook(closedModal.definition.onExit, closedModal.context)
-        scopeOwner.cleanup(closedModal)
+
+        if closeTransition ~= nil and hasBoundApp() then
+            trackExitingModal(closedModal, closeTransition, function()
+                scopeOwner.cleanup(closedModal)
+            end)
+        else
+            closedModal.state = "exiting"
+            setEntryActive(closedModal, false)
+            scopeOwner.cleanup(closedModal)
+        end
+
         activateUnderlyingModal()
+        notifyStateChanged()
 
         return closedModal
     end
@@ -631,6 +863,19 @@ local function createRouter(config, deps: RouterDeps?)
                 end
             else
                 state.retainedScreens[currentScreen.key] = nil
+
+                local pushExitTransition = resolveScreenExitTransition(
+                    currentScreen.definition,
+                    registries.transitions.screenPush
+                )
+
+                if pushExitTransition ~= nil and hasBoundApp() and currentScreen.isMounted then
+                    currentScreen.state = "exiting"
+                    scheduleTransition(currentScreen, pushExitTransition, "exiting", function()
+                        currentScreen.state = "paused"
+                        scopeOwner.cleanup(currentScreen)
+                    end)
+                end
             end
         end
 
@@ -677,8 +922,13 @@ local function createRouter(config, deps: RouterDeps?)
         end
 
         if currentScreen ~= nil and not currentScreen.retained then
-            scopeOwner.cleanup(currentScreen)
+            if not hasBoundApp() or currentScreen.transition == nil then
+                scopeOwner.cleanup(currentScreen)
+            end
         end
+
+        beginScreenEnterTransition(entry)
+        notifyStateChanged()
 
         return mountResult
     end
@@ -738,7 +988,6 @@ local function createRouter(config, deps: RouterDeps?)
             if currentScreen.retained then
                 currentScreen.state = "paused"
             else
-                currentScreen.state = "exiting"
                 state.retainedScreens[currentScreen.key] = nil
                 runLifecycleHook(currentScreen.definition.onExit, currentScreen.context)
             end
@@ -794,9 +1043,25 @@ local function createRouter(config, deps: RouterDeps?)
             if currentScreen.retained then
                 storeRetainedEntry(currentScreen)
             else
-                scopeOwner.cleanup(currentScreen)
+                local replaceExitTransition = resolveScreenExitTransition(
+                    currentScreen.definition,
+                    registries.transitions.screenPop
+                )
+
+                if replaceExitTransition ~= nil and hasBoundApp() then
+                    trackExitingScreen(currentScreen, replaceExitTransition, function()
+                        scopeOwner.cleanup(currentScreen)
+                    end)
+                else
+                    currentScreen.state = "exiting"
+                    setEntryActive(currentScreen, false)
+                    scopeOwner.cleanup(currentScreen)
+                end
             end
         end
+
+        beginScreenEnterTransition(entry)
+        notifyStateChanged()
 
         return mountResult
     end
@@ -818,7 +1083,8 @@ local function createRouter(config, deps: RouterDeps?)
         end
 
         local previousScreen = state.screenStack[#state.screenStack - 1]
-        local shouldResumePrevious = previousScreen ~= nil and previousScreen.state == "paused"
+        local shouldResumePrevious = previousScreen ~= nil
+            and (previousScreen.state == "paused" or previousScreen.state == "exiting")
         local poppedScreen = table.remove(state.screenStack)
 
         setEntryActive(poppedScreen, false)
@@ -827,19 +1093,40 @@ local function createRouter(config, deps: RouterDeps?)
             poppedScreen.state = "paused"
             storeRetainedEntry(poppedScreen)
         else
-            poppedScreen.state = "exiting"
             state.retainedScreens[poppedScreen.key] = nil
             runLifecycleHook(poppedScreen.definition.onExit, poppedScreen.context)
-            scopeOwner.cleanup(poppedScreen)
+
+            local backExitTransition = resolveScreenExitTransition(
+                poppedScreen.definition,
+                registries.transitions.screenPop
+            )
+
+            if backExitTransition ~= nil and hasBoundApp() then
+                trackExitingScreen(poppedScreen, backExitTransition, function()
+                    scopeOwner.cleanup(poppedScreen)
+                end)
+            else
+                poppedScreen.state = "exiting"
+                scopeOwner.cleanup(poppedScreen)
+            end
         end
 
         if previousScreen ~= nil then
+            cancelPendingTransition(previousScreen)
             resumeScreenEntry(previousScreen)
 
             if shouldResumePrevious then
                 runLifecycleHook(previousScreen.definition.onResume, previousScreen.context)
             end
         end
+
+        if hasBoundApp() then
+            state.currentTransition = resolveScreenExitTransition(
+                poppedScreen.definition,
+                registries.transitions.screenPop
+            )
+        end
+        notifyStateChanged()
 
         return poppedScreen
     end
@@ -864,6 +1151,8 @@ local function createRouter(config, deps: RouterDeps?)
 
         clearArray(state.modalStack)
         clearArray(state.screenStack)
+        clearArray(state.exitingScreens)
+        clearArray(state.exitingModals)
         clearMap(state.retainedScreens)
         retainedKeepAlive = {}
         retainedSingleton = {}
@@ -884,6 +1173,8 @@ local function createRouter(config, deps: RouterDeps?)
         end
 
         runLifecycleHook(definition.onEnter, entry.context)
+        beginScreenEnterTransition(entry)
+        notifyStateChanged()
 
         return mountResult
     end
@@ -910,7 +1201,6 @@ local function createRouter(config, deps: RouterDeps?)
         end
 
         table.insert(state.modalStack, entry)
-        state.currentTransition = definition.transition or registries.transitions.modalOpen
 
         local mounted, mountResult = pcall(mountModalEntry, entry)
 
@@ -944,6 +1234,9 @@ local function createRouter(config, deps: RouterDeps?)
             end
         end
 
+        beginModalEnterTransition(entry)
+        notifyStateChanged()
+
         return mountResult
     end
 
@@ -976,6 +1269,8 @@ local function createRouter(config, deps: RouterDeps?)
             table.insert(closed, closedModal)
         end
 
+        notifyStateChanged()
+
         return closed
     end
 
@@ -1002,7 +1297,9 @@ local function createRouter(config, deps: RouterDeps?)
     end
 
     router:push(config.initialScreen)
+    state.currentTransition = nil
     registerOverlays()
+    notifyStateChanged()
 
     return table.freeze(router)
 end
