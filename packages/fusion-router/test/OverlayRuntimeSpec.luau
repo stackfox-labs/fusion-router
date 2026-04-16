@@ -1,4 +1,6 @@
-local createRouter = require("../src/runtime/createRouter")
+local TestRouter = require("./TestRouter")
+local createRouter = TestRouter.createRouter
+local fusion = TestRouter.fusion
 local Router = require("../src")
 
 local function findOverlay(router, routeName)
@@ -11,43 +13,12 @@ local function findOverlay(router, routeName)
     error(("Expected overlay entry %q to exist"):format(routeName))
 end
 
-local function createReactiveBoolean(initialValue)
-    local listeners = {}
-    local signal = {
-        value = initialValue,
-    }
-
-    function signal.subscribe(_, callback)
-        table.insert(listeners, callback)
-
-        return function()
-            local index = table.find(listeners, callback)
-
-            if index ~= nil then
-                table.remove(listeners, index)
-            end
-        end
-    end
-
-    function signal:set(nextValue)
-        self.value = nextValue
-
-        local snapshot = table.clone(listeners)
-
-        for _, callback in snapshot do
-            callback(nextValue)
-        end
-    end
-
-    return signal
-end
-
 return {
     name = "overlay runtime registration visibility lifecycle and back behavior work independently",
     run = function()
         local callLog = {}
-        local hudVisible = createReactiveBoolean(false)
-        local toastVisible = createReactiveBoolean(false)
+        local hudVisible = fusion:scoped():Value(false)
+        local toastVisible = fusion:scoped():Value(false)
         local screenCalls = 0
 
         local router = createRouter({
@@ -112,12 +83,6 @@ return {
                         table.insert(callLog, "toasts:onExit")
                     end,
                 }),
-            },
-        }, {
-            fusion = {
-                peek = function(visibleSource)
-                    return visibleSource.value
-                end,
             },
         })
 

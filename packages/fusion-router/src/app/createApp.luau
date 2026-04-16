@@ -1,5 +1,50 @@
 local Validation = require("../shared/validation")
 local TransitionPresets = require("./transitions")
+local getFusion = require("../shared/getFusion")
+
+local function makeScaleUDim2(xScale, yScale)
+    if UDim2 ~= nil and type(UDim2.fromScale) == "function" then
+        return UDim2.fromScale(xScale, yScale)
+    end
+
+    return {
+        xScale = xScale,
+        yScale = yScale,
+    }
+end
+
+local function makeVector2(x, y)
+    if Vector2 ~= nil and type(Vector2.new) == "function" then
+        return Vector2.new(x, y)
+    end
+
+    return {
+        x = x,
+        y = y,
+    }
+end
+
+local function makeColor3(r, g, b)
+    if Color3 ~= nil and type(Color3.new) == "function" then
+        return Color3.new(r, g, b)
+    end
+
+    return {
+        r = r,
+        g = g,
+        b = b,
+    }
+end
+
+local function makeTweenInfo(duration)
+    if TweenInfo ~= nil and type(TweenInfo.new) == "function" and Enum ~= nil then
+        return TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    end
+
+    return {
+        duration = duration,
+    }
+end
 
 local function validateScope(scope)
     local subject = "Router.App"
@@ -11,6 +56,7 @@ local function validateScope(scope)
     end
 
     Validation.expectFunction(subject, scope.New, "scope.New", 1)
+    Validation.expectFunction(subject, scope.Computed, "scope.Computed", 1)
 end
 
 local function validateRouter(router)
@@ -22,11 +68,10 @@ local function validateRouter(router)
         error("Router.App expected router to be a table, got nil", 2)
     end
 
-    Validation.expectTableOrNil(subject, router._state, "router._state", 1)
     Validation.expectTableOrNil(subject, router._runtime, "router._runtime", 1)
-    Validation.expectFunction(subject, router._runtime.subscribe, "router._runtime.subscribe", 1)
+    Validation.expectTableOrNil(subject, router._state, "router._state", 1)
     Validation.expectFunction(subject, router._runtime.bindApp, "router._runtime.bindApp", 1)
-    Validation.expectFunction(subject, router.popModal, "router.popModal", 1)
+    Validation.expectTableOrNil(subject, router._runtime.version, "router._runtime.version", 1)
 end
 
 local function createDefaultScheduler()
@@ -49,157 +94,162 @@ local function createDefaultScheduler()
         cancel = function() end,
         delay = function(_, callback)
             callback()
-
             return nil
         end,
     }
 end
 
-local function instantiate(scope, className, props)
-    local constructor = scope:New(className)
-    local instance = constructor(props)
-
-    if type(instance) ~= "table" then
-        instance = {}
+local function resolveStyleForEntry(entry)
+    if entry.transition == nil then
+        return TransitionPresets.activeStyle(), TransitionPresets.activeStyle(), 0
     end
 
-    instance.ClassName = className
-
-    for key, value in props do
-        instance[key] = value
+    if entry.transition.phase == "entering" then
+        return TransitionPresets.resolvePhaseStyle(entry.transition.name, "entering"),
+            TransitionPresets.activeStyle(),
+            entry.transition.duration
     end
 
-    return instance
+    return TransitionPresets.activeStyle(),
+        TransitionPresets.resolvePhaseStyle(entry.transition.name, "exiting"),
+        entry.transition.duration
 end
 
-local function updateNode(node, props)
-    for key, value in props do
-        node[key] = value
-    end
+local function createAnimatedStates(scope, entry)
+    local startStyle, endStyle, duration = resolveStyleForEntry(entry)
 
-    return node
-end
+    local positionGoal = scope:Value(startStyle.position)
+    local transparencyGoal = scope:Value(startStyle.transparency)
+    local scaleGoal = scope:Value(startStyle.scale)
 
-local function createTransitionSnapshot(entry)
-    local transition = entry.transition
+    local tweenInfo = makeTweenInfo(duration)
+    local tweenPosition = if duration > 0
+        then scope:Tween(positionGoal, tweenInfo)
+        else positionGoal
+    local tweenTransparency = if duration > 0
+        then scope:Tween(transparencyGoal, tweenInfo)
+        else transparencyGoal
+    local tweenScale = if duration > 0 then scope:Tween(scaleGoal, tweenInfo) else scaleGoal
 
-    if transition == nil then
-        return nil
-    end
+    positionGoal:set(endStyle.position)
+    transparencyGoal:set(endStyle.transparency)
+    scaleGoal:set(endStyle.scale)
 
     return {
-        duration = transition.duration,
-        name = transition.name,
-        phase = transition.phase,
-        style = TransitionPresets.resolveStyle(transition.name, transition.phase),
+        position = tweenPosition,
+        scale = tweenScale,
+        transparency = tweenTransparency,
     }
 end
 
-local function shouldRenderScreen(entry)
-    return entry.isMounted or entry.state == "exiting"
-end
+local function routeAttributes(fusion, layerName, entry)
+    local attributes = {}
 
-local function shouldRenderModal(entry)
-    return entry.isMounted or entry.state == "exiting"
-end
+    if type(fusion.Attribute) == "function" then
+        attributes[fusion.Attribute("RouteKey")] = entry.key
+        attributes[fusion.Attribute("RouteLayer")] = layerName
+        attributes[fusion.Attribute("RouteName")] = entry.name
+        attributes[fusion.Attribute("RouteState")] = entry.state
 
-local function shouldRenderOverlay(entry)
-    return entry.isMounted
-end
-
-local function createRouteNode(scope, layerKind, entry, layoutOrder, extraProps)
-    local isVisible = true
-
-    if layerKind == "screen" then
-        isVisible = entry.state ~= "paused"
-    elseif layerKind == "overlay" then
-        isVisible = entry.isVisible or entry.state == "entering" or entry.state == "exiting"
-    end
-
-    local props = {
-        Active = entry.context ~= nil and entry.context.isActive.value or false,
-        Children = if entry.instance == nil then {} else { entry.instance },
-        Key = entry.key,
-        Kind = entry.kind,
-        LayoutOrder = layoutOrder,
-        MountedInstance = entry.instance,
-        Name = ("%s:%s"):format(layerKind, entry.name),
-        RouteKey = entry.key,
-        RouteName = entry.name,
-        State = entry.state,
-        Transition = createTransitionSnapshot(entry),
-        Visible = isVisible,
-    }
-
-    if extraProps ~= nil then
-        for key, value in extraProps do
-            props[key] = value
+        if entry.transition ~= nil then
+            attributes[fusion.Attribute("TransitionName")] = entry.transition.name
+            attributes[fusion.Attribute("TransitionPhase")] = entry.transition.phase
         end
     end
 
-    return instantiate(scope, "Frame", props)
+    return attributes
 end
 
-local function createModalBarrierNode(scope, router, entry, layoutOrder)
-    return instantiate(scope, "TextButton", {
-        AutoButtonColor = false,
-        Barrier = true,
-        Dismissible = entry.definition.barrierDismiss,
+local function createRouteWrapper(scope, fusion, layerName, entry, layoutOrder)
+    local Children = fusion.Children
+    local animated = createAnimatedStates(scope, entry)
+    local attributes = routeAttributes(fusion, layerName, entry)
+    local childTree = if entry.instance == nil then {} else { entry.instance }
+    local visible = entry.state ~= "paused" and entry.state ~= "inactive"
+
+    if layerName == "overlay" and not entry.isVisible and entry.persistent then
+        visible = false
+    end
+
+    local props = {
+        Active = entry.context ~= nil and entry.context.isActive or false,
+        AnchorPoint = makeVector2(0, 0),
+        BackgroundTransparency = 1,
+        GroupTransparency = animated.transparency,
         LayoutOrder = layoutOrder,
-        Name = ("modalBarrier:%s"):format(entry.name),
-        OnActivated = function()
+        Name = ("%s_%s"):format(layerName, entry.name),
+        Position = animated.position,
+        Size = makeScaleUDim2(1, 1),
+        Visible = visible,
+
+        [Children] = {
+            scope:New("UIScale")({
+                Scale = animated.scale,
+            }),
+            childTree,
+        },
+    }
+
+    for key, value in attributes do
+        props[key] = value
+    end
+
+    local createCanvasGroup = scope:New("CanvasGroup")
+    return createCanvasGroup(props)
+end
+
+local function createModalBarrier(scope, fusion, router, entry, layoutOrder)
+    local OnEvent = fusion.OnEvent
+    local animated = createAnimatedStates(scope, entry)
+    local props = {
+        AutoButtonColor = false,
+        BackgroundColor3 = makeColor3(0, 0, 0),
+        BackgroundTransparency = scope:Computed(function(use)
+            local baseTransparency = use(animated.transparency)
+            return math.min(1, 0.45 + baseTransparency * 0.55)
+        end),
+        LayoutOrder = layoutOrder,
+        Name = ("modalBarrier_%s"):format(entry.name),
+        Size = makeScaleUDim2(1, 1),
+        Text = "",
+        Visible = entry.state ~= "inactive",
+
+        [OnEvent("Activated")] = function()
             if entry.definition.barrierDismiss then
                 router:popModal()
             end
         end,
-        RouteKey = entry.key,
-        RouteName = entry.name,
-        Visible = true,
-    })
+    }
+
+    if type(fusion.Attribute) == "function" then
+        props[fusion.Attribute("BarrierRouteName")] = entry.name
+        props[fusion.Attribute("BarrierDismiss")] = entry.definition.barrierDismiss
+    end
+
+    local createTextButton = scope:New("TextButton")
+    return createTextButton(props)
 end
 
-local function appendScreenNodes(scope, destination, entries)
-    for _, entry in entries do
-        if shouldRenderScreen(entry) then
-            table.insert(
-                destination,
-                createRouteNode(scope, "screen", entry, #destination + 1, {
-                    Hidden = entry.state == "paused",
-                    Retained = entry.retained,
-                })
-            )
-        end
-    end
-end
+local function createLayer(scope, fusion, name, layoutOrder, childFactory)
+    local Children = fusion.Children
 
-local function appendModalNodes(scope, router, destination, entries)
-    for _, entry in entries do
-        if shouldRenderModal(entry) then
-            table.insert(
-                destination,
-                createModalBarrierNode(scope, router, entry, #destination + 1)
-            )
-            table.insert(
-                destination,
-                createRouteNode(scope, "modal", entry, #destination + 1, {
-                    BarrierDismiss = entry.definition.barrierDismiss,
-                })
-            )
-        end
-    end
-end
+    local props = {
+        BackgroundTransparency = 1,
+        LayoutOrder = layoutOrder,
+        Name = name,
+        Size = makeScaleUDim2(1, 1),
 
-local function appendOverlayNodes(scope, destination, entries)
-    for _, entry in entries do
-        if shouldRenderOverlay(entry) then
-            table.insert(
-                destination,
-                createRouteNode(scope, "overlay", entry, #destination + 1, {
-                    Persistent = entry.persistent,
-                })
-            )
-        end
+        [Children] = scope:Computed(function(use, innerScope)
+            return childFactory(use, innerScope)
+        end),
+    }
+
+    if type(fusion.Attribute) == "function" then
+        props[fusion.Attribute("LayerName")] = name
     end
+
+    local createFrame = scope:New("Frame")
+    return createFrame(props)
 end
 
 local function createApp(scope, router, options)
@@ -207,74 +257,126 @@ local function createApp(scope, router, options)
     validateRouter(router)
     Validation.expectTableOrNil("Router.App", options, "options", 3)
 
+    local fusion = if options ~= nil and options.fusion ~= nil
+        then options.fusion
+        else router._runtime.fusion or getFusion()
     local scheduler = if options ~= nil and options.scheduler ~= nil
         then options.scheduler
         else createDefaultScheduler()
+    local Children = fusion.Children
+    local screenLayer = createLayer(
+        scope,
+        fusion,
+        "FusionRouterScreens",
+        1,
+        function(use, innerScope)
+            use(router._runtime.version)
 
-    local root = instantiate(scope, "Frame", {
+            local children = {}
+            local layoutOrder = 1
+
+            for _, entry in router._state.screenStack do
+                if entry.isMounted or entry.state == "paused" then
+                    table.insert(
+                        children,
+                        createRouteWrapper(innerScope, fusion, "screen", entry, layoutOrder)
+                    )
+                    layoutOrder += 1
+                end
+            end
+
+            for _, entry in router._state.exitingScreens do
+                table.insert(
+                    children,
+                    createRouteWrapper(innerScope, fusion, "screen", entry, layoutOrder)
+                )
+                layoutOrder += 1
+            end
+
+            return children
+        end
+    )
+
+    local modalLayer = createLayer(scope, fusion, "FusionRouterModals", 2, function(use, innerScope)
+        use(router._runtime.version)
+
+        local children = {}
+        local layoutOrder = 1
+
+        for _, entry in router._state.modalStack do
+            table.insert(
+                children,
+                createModalBarrier(innerScope, fusion, router, entry, layoutOrder)
+            )
+            layoutOrder += 1
+            table.insert(
+                children,
+                createRouteWrapper(innerScope, fusion, "modal", entry, layoutOrder)
+            )
+            layoutOrder += 1
+        end
+
+        for _, entry in router._state.exitingModals do
+            table.insert(
+                children,
+                createModalBarrier(innerScope, fusion, router, entry, layoutOrder)
+            )
+            layoutOrder += 1
+            table.insert(
+                children,
+                createRouteWrapper(innerScope, fusion, "modal", entry, layoutOrder)
+            )
+            layoutOrder += 1
+        end
+
+        return children
+    end)
+
+    local overlayLayer = createLayer(
+        scope,
+        fusion,
+        "FusionRouterOverlays",
+        3,
+        function(use, innerScope)
+            use(router._runtime.version)
+
+            local children = {}
+            local layoutOrder = 1
+
+            for _, entry in router._state.overlayEntries do
+                if entry.isMounted then
+                    table.insert(
+                        children,
+                        createRouteWrapper(innerScope, fusion, "overlay", entry, layoutOrder)
+                    )
+                    layoutOrder += 1
+                end
+            end
+
+            return children
+        end
+    )
+
+    local root = scope:New("Frame")({
         BackgroundTransparency = 1,
-        Children = {},
         ClipsDescendants = false,
         Name = "FusionRouterApp",
-    })
-    local screenLayer = instantiate(scope, "Frame", {
-        BackgroundTransparency = 1,
-        Children = {},
-        LayoutOrder = 1,
-        Layer = "screens",
-        Name = "FusionRouterScreens",
-    })
-    local modalLayer = instantiate(scope, "Frame", {
-        BackgroundTransparency = 1,
-        Children = {},
-        LayoutOrder = 2,
-        Layer = "modals",
-        Name = "FusionRouterModals",
-    })
-    local overlayLayer = instantiate(scope, "Frame", {
-        BackgroundTransparency = 1,
-        Children = {},
-        LayoutOrder = 3,
-        Layer = "overlays",
-        Name = "FusionRouterOverlays",
+        Size = makeScaleUDim2(1, 1),
+
+        [Children] = {
+            screenLayer,
+            modalLayer,
+            overlayLayer,
+        },
     })
 
-    local function rebuild()
-        local screenChildren = {}
-        local modalChildren = {}
-        local overlayChildren = {}
-
-        appendScreenNodes(scope, screenChildren, router._state.screenStack)
-        appendScreenNodes(scope, screenChildren, router._state.exitingScreens)
-        appendModalNodes(scope, router, modalChildren, router._state.modalStack)
-        appendModalNodes(scope, router, modalChildren, router._state.exitingModals)
-        appendOverlayNodes(scope, overlayChildren, router._state.overlayEntries)
-
-        updateNode(screenLayer, {
-            Children = screenChildren,
-        })
-        updateNode(modalLayer, {
-            Children = modalChildren,
-        })
-        updateNode(overlayLayer, {
-            Children = overlayChildren,
-        })
-        updateNode(root, {
-            Children = { screenLayer, modalLayer, overlayLayer },
-        })
-    end
-
-    local unsubscribe = router._runtime.subscribe(rebuild)
     local unbind = router._runtime.bindApp({
         scheduler = scheduler,
     })
 
-    root.cleanup = function()
-        unsubscribe()
+    table.insert(scope, function()
         unbind()
-    end
-
-    rebuild()
+    end)
 
     return root
 end

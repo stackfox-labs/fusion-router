@@ -1,4 +1,5 @@
 local Router = require("../src")
+local createRouter = require("./TestRouter").createRouter
 
 local function noop() end
 
@@ -20,7 +21,7 @@ end
 return {
     name = "router inspection helpers reflect screen and modal stack state",
     run = function()
-        local router = Router.create(createConfig())
+        local router = createRouter(createConfig())
 
         assert(
             router:getCurrentScreen().name == "MainMenu",

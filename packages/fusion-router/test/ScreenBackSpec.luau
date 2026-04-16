@@ -1,4 +1,4 @@
-local createRouter = require("../src/runtime/createRouter")
+local createRouter = require("./TestRouter").createRouter
 local Router = require("../src")
 
 return {

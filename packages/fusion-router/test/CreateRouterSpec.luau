@@ -1,4 +1,4 @@
-local createRouter = require("../src/runtime/createRouter")
+local createRouter = require("./TestRouter").createRouter
 local Router = require("../src")
 
 local function expectError(callback, expectedMessage)
@@ -176,7 +176,7 @@ return {
         )
 
         expectError(function()
-            Router.create({
+            createRouter({
                 initialScreen = "Missing",
                 screens = {
                     MainMenu = Router.screen(noop),

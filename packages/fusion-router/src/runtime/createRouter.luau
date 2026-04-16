@@ -2,6 +2,8 @@ local EntryFactory = require("./entries")
 local Validation = require("../shared/validation")
 local createRuntimeKeyGenerator = require("./keyGenerator")
 local createRouteContext = require("./routeContext")
+local createScopeOwner = require("./scopeOwner")
+local getFusion = require("../shared/getFusion")
 
 local TRANSITION_DURATIONS = {
     fade = 0.18,
@@ -76,66 +78,24 @@ local function clearMap(map)
     end
 end
 
-local function createBasicScopeOwner()
-    local nextScopeId = 0
-    local owner = {}
-
-    function owner.attach(entry)
-        if entry.scope ~= nil then
-            error(
-                ("BasicScopeOwner.attach expected entry '%s' to not already have a scope"):format(
-                    tostring(entry.name)
-                ),
-                2
-            )
-        end
-
-        nextScopeId += 1
-
-        local scope = {
-            id = nextScopeId,
-        }
-
-        entry.scope = scope
-        entry.cleanup = function()
-            owner.cleanup(entry)
-        end
-
-        return scope
-    end
-
-    function owner.cleanup(entry)
-        if entry.scope == nil then
-            return false
-        end
-
-        entry.scope = nil
-        entry.context = nil
-        entry.instance = nil
-        entry.cleanup = nil
-        entry.isMounted = false
-
-        return true
-    end
-
-    return table.freeze(owner)
-end
-
 local function ensureActiveState(entry)
     local activeState = entry._activeState
 
     if activeState == nil then
-        activeState = {
-            value = false,
-        }
-        entry._activeState = activeState
+        error(
+            ("ensureActiveState expected entry '%s' to have reactive state"):format(entry.name),
+            2
+        )
     end
 
     return activeState
 end
 
 local function setEntryActive(entry, isActive)
-    ensureActiveState(entry).value = isActive
+    local activeState = ensureActiveState(entry)
+
+    activeState.value = isActive
+    activeState:set(isActive)
 end
 
 local function validateRouteParams(subject, definition, params)
@@ -168,13 +128,16 @@ local function createRouter(config, deps: RouterDeps?)
     Validation.validateRouterConfig(config)
 
     local resolvedDeps = deps or {}
+    local fusion = resolvedDeps.fusion or getFusion()
     local keyGeneratorFactory = resolvedDeps.createRuntimeKeyGenerator or createRuntimeKeyGenerator
     local keyGenerator = keyGeneratorFactory()
     local routeContextFactory = resolvedDeps.createRouteContext or createRouteContext
     local scopeOwnerFactory = resolvedDeps.createScopeOwner
+    local runtimeScope = fusion:scoped()
+    local runtimeVersion = runtimeScope:Value(0)
     local scopeOwner = if scopeOwnerFactory ~= nil
-        then scopeOwnerFactory(resolvedDeps.fusion)
-        else createBasicScopeOwner()
+        then scopeOwnerFactory(fusion)
+        else createScopeOwner(fusion)
 
     local registries = {
         screens = config.screens,
@@ -200,14 +163,19 @@ local function createRouter(config, deps: RouterDeps?)
         _registries = registries,
         _runtime = {
             appBinding = nil,
+            fusion = fusion,
             keyGenerator = keyGenerator,
             listeners = {},
             scheduler = resolvedDeps.scheduler,
+            version = runtimeVersion,
         },
         _state = state,
     }
 
     local function notifyStateChanged()
+        runtimeVersion.value = fusion.peek(runtimeVersion) + 1
+        runtimeVersion:set(runtimeVersion.value)
+
         for _, listener in router._runtime.listeners do
             listener()
         end
@@ -282,6 +250,15 @@ local function createRouter(config, deps: RouterDeps?)
         end
 
         return router._runtime.scheduler
+    end
+
+    local function initializeReactiveEntryState(entry)
+        if entry._activeState == nil then
+            entry._activeState = runtimeScope:Value(false)
+            entry._activeState.value = false
+        end
+
+        return entry
     end
 
     local function hasBoundApp()
@@ -500,6 +477,8 @@ local function createRouter(config, deps: RouterDeps?)
             reused = false
         end
 
+        initializeReactiveEntryState(entry)
+
         ensureEntryContext(entry)
 
         return entry, reused
@@ -534,6 +513,7 @@ local function createRouter(config, deps: RouterDeps?)
             params
         )
 
+        initializeReactiveEntryState(entry)
         ensureEntryContext(entry)
 
         local canEnter = definition.canEnter
@@ -647,33 +627,13 @@ local function createRouter(config, deps: RouterDeps?)
             return visibleSource
         end
 
-        local fusion = resolvedDeps.fusion
+        local peeked, visibleValue = pcall(fusion.peek, visibleSource)
 
-        if fusion ~= nil and type(fusion.peek) == "function" then
-            local peeked, visibleValue = pcall(fusion.peek, visibleSource)
-
-            if not peeked then
-                error(visibleValue, 0)
-            end
-
-            return not not visibleValue
+        if not peeked then
+            error(visibleValue, 0)
         end
 
-        if type(visibleSource) == "table" then
-            local rawValue = rawget(visibleSource, "value")
-
-            if type(rawValue) == "boolean" then
-                return rawValue
-            end
-
-            local currentValue = rawget(visibleSource, "current")
-
-            if type(currentValue) == "boolean" then
-                return currentValue
-            end
-        end
-
-        return not not visibleSource
+        return not not visibleValue
     end
 
     local function mountOverlayEntry(entry)
@@ -690,17 +650,12 @@ local function createRouter(config, deps: RouterDeps?)
     local function subscribeOverlayVisibility(entry)
         local visibleSource = entry.visible
 
-        if type(visibleSource) ~= "table" then
+        if visibleSource == nil or type(visibleSource) == "boolean" then
             return
         end
 
-        local subscribe = visibleSource.subscribe or visibleSource.onChange
-
-        if type(subscribe) ~= "function" then
-            return
-        end
-
-        local disconnect = subscribe(visibleSource, function()
+        local observer = fusion.Observer(runtimeScope, visibleSource)
+        local disconnect = observer:onChange(function()
             syncOverlayEntry(entry)
         end)
 
@@ -741,7 +696,10 @@ local function createRouter(config, deps: RouterDeps?)
         local entries = {}
 
         for routeName, definition in registries.overlays do
-            table.insert(entries, EntryFactory.createOverlayEntry(routeName, definition))
+            table.insert(
+                entries,
+                initializeReactiveEntryState(EntryFactory.createOverlayEntry(routeName, definition))
+            )
         end
 
         table.sort(entries, function(left, right)

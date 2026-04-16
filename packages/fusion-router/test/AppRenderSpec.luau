@@ -1,28 +1,8 @@
 local Router = require("../src")
+local TestRouter = require("./TestRouter")
 
-local function createFakeScope()
-    local scope = {
-        created = {},
-    }
-
-    function scope:New(className)
-        return function(props)
-            local node = {
-                ClassName = className,
-            }
-
-            for key, value in props do
-                node[key] = value
-            end
-
-            table.insert(self.created, node)
-
-            return node
-        end
-    end
-
-    return scope
-end
+local createRouter = TestRouter.createRouter
+local fusion = TestRouter.fusion
 
 local function createScheduler()
     local queue = {}
@@ -70,24 +50,12 @@ local function createScheduler()
         end
     end
 
-    function scheduler.pendingCount()
-        local count = 0
-
-        for _, handle in queue do
-            if not handle.cancelled then
-                count += 1
-            end
-        end
-
-        return count
-    end
-
     return scheduler
 end
 
 local function getLayer(root, name)
     for _, child in root.Children do
-        if child.Layer == name then
+        if child.Attributes.LayerName == name then
             return child
         end
     end
@@ -97,7 +65,7 @@ end
 
 local function findRouteNode(layer, routeName)
     for _, child in layer.Children do
-        if child.RouteName == routeName and child.Barrier ~= true then
+        if child.Attributes.RouteName == routeName then
             return child
         end
     end
@@ -107,7 +75,7 @@ end
 
 local function findBarrierNode(layer, routeName)
     for _, child in layer.Children do
-        if child.RouteName == routeName and child.Barrier == true then
+        if child.Attributes.BarrierRouteName == routeName then
             return child
         end
     end
@@ -118,12 +86,10 @@ end
 return {
     name = "Router.App renders screens modals and overlays in layer order with retained and exiting state",
     run = function()
-        local scope = createFakeScope()
+        local scope = fusion:scoped()
         local scheduler = createScheduler()
-        local overlayVisible = {
-            value = true,
-        }
-        local router = Router.create({
+        local overlayVisible = fusion:scoped():Value(true)
+        local router = createRouter({
             initialScreen = "MainMenu",
             screens = {
                 MainMenu = Router.screen(function()
@@ -163,26 +129,30 @@ return {
                 modalOpen = "fade",
                 modalClose = "fadeOut",
             },
-        }, {
-            fusion = {
-                peek = function(source)
-                    return source.value
-                end,
-            },
         })
 
         local app = Router.App(scope, router, {
+            fusion = fusion,
             scheduler = scheduler,
         })
 
         assert(type(Router.App) == "function", "Router.App should be exported")
-        assert(app.Children[1].Layer == "screens", "App should render the screen layer first")
-        assert(app.Children[2].Layer == "modals", "App should render the modal layer second")
-        assert(app.Children[3].Layer == "overlays", "App should render the overlay layer third")
+        assert(
+            app.Children[1].Attributes.LayerName == "FusionRouterScreens",
+            "App should render the screen layer first"
+        )
+        assert(
+            app.Children[2].Attributes.LayerName == "FusionRouterModals",
+            "App should render the modal layer second"
+        )
+        assert(
+            app.Children[3].Attributes.LayerName == "FusionRouterOverlays",
+            "App should render the overlay layer third"
+        )
 
-        local screenLayer = getLayer(app, "screens")
-        local modalLayer = getLayer(app, "modals")
-        local overlayLayer = getLayer(app, "overlays")
+        local screenLayer = getLayer(app, "FusionRouterScreens")
+        local modalLayer = getLayer(app, "FusionRouterModals")
+        local overlayLayer = getLayer(app, "FusionRouterOverlays")
 
         assert(
             findRouteNode(screenLayer, "MainMenu") ~= nil,
@@ -201,20 +171,17 @@ return {
 
         assert(mainNode ~= nil, "Retained previous screens should remain rendered")
         assert(mainNode.Visible == false, "Retained paused screens should render hidden")
-        assert(mainNode.Hidden == true, "Retained paused screens should be marked hidden")
         assert(
-            inventoryNode.State == "entering",
-            "New pushed screens should render in an entering state while their transition runs"
-        )
-        assert(
-            inventoryNode.Transition.name == "slideLeft",
-            "Screen pushes should resolve the global screenPush transition in the app layer"
+            inventoryNode.Attributes.RouteState == "entering"
+                and inventoryNode.Attributes.TransitionName == "slideLeft",
+            "New pushed screens should render with the entering transition metadata"
         )
 
         scheduler.flushAll()
         inventoryNode = findRouteNode(screenLayer, "Inventory")
         assert(
-            inventoryNode.State == "active" and inventoryNode.Transition == nil,
+            inventoryNode.Attributes.RouteState == "active"
+                and inventoryNode.Attributes.TransitionName == nil,
             "Entering screens should settle to active after their transition completes"
         )
 
@@ -224,14 +191,17 @@ return {
         local confirmNode = findRouteNode(modalLayer, "Confirm")
 
         assert(barrierNode ~= nil, "Active modals should render a router-owned barrier")
-        assert(barrierNode.Dismissible == true, "Barrier dismissibility should follow modal config")
+        assert(
+            barrierNode.Attributes.BarrierDismiss == true,
+            "Barrier dismissibility should follow modal config"
+        )
         assert(confirmNode ~= nil, "Active modals should render into the modal layer")
 
         barrierNode.OnActivated()
         confirmNode = findRouteNode(modalLayer, "Confirm")
 
         assert(
-            confirmNode ~= nil and confirmNode.State == "exiting",
+            confirmNode ~= nil and confirmNode.Attributes.RouteState == "exiting",
             "Dismissed modals should remain rendered long enough to complete exit transitions"
         )
 
@@ -244,11 +214,13 @@ return {
         mainNode = findRouteNode(screenLayer, "MainMenu")
 
         assert(
-            inventoryNode ~= nil and inventoryNode.State == "exiting",
+            inventoryNode ~= nil and inventoryNode.Attributes.RouteState == "exiting",
             "Back should keep the popped screen rendered while its exit transition runs"
         )
         assert(
-            mainNode ~= nil and mainNode.State == "active" and mainNode.Visible == true,
+            mainNode ~= nil
+                and mainNode.Attributes.RouteState == "active"
+                and mainNode.Visible == true,
             "Back should reactivate the previous retained screen in place"
         )
 

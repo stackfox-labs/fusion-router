@@ -1,27 +1,68 @@
 local TransitionPresets = {}
 
-local function createStyle(opacity, offsetX, scale)
+local function fromScale(xScale, yScale)
+    if UDim2 ~= nil and type(UDim2.fromScale) == "function" then
+        return UDim2.fromScale(xScale, yScale)
+    end
+
     return {
-        offsetX = offsetX or 0,
-        opacity = opacity or 1,
-        scale = scale or 1,
+        xScale = xScale,
+        yScale = yScale,
     }
 end
 
-function TransitionPresets.resolveStyle(presetName, phase)
+local function makeStyle(position, transparency, scale)
+    return {
+        position = position,
+        transparency = transparency,
+        scale = scale,
+    }
+end
+
+local ACTIVE_STYLE = makeStyle(fromScale(0, 0), 0, 1)
+
+function TransitionPresets.activeStyle()
+    return ACTIVE_STYLE
+end
+
+function TransitionPresets.hiddenStyle()
+    return makeStyle(fromScale(0, 0), 0, 1)
+end
+
+function TransitionPresets.resolvePhaseStyle(presetName, phase)
     if presetName == "fade" then
-        return if phase == "entering" then createStyle(0.45, 0, 1) else createStyle(0, 0, 1)
+        if phase == "entering" then
+            return makeStyle(fromScale(0, 0), 1, 1)
+        end
+
+        return makeStyle(fromScale(0, 0), 1, 1)
     elseif presetName == "slideLeft" then
-        return if phase == "entering" then createStyle(1, 1, 1) else createStyle(1, -1, 1)
+        if phase == "entering" then
+            return makeStyle(fromScale(1, 0), 0, 1)
+        end
+
+        return makeStyle(fromScale(-1, 0), 0, 1)
     elseif presetName == "slideRight" then
-        return if phase == "entering" then createStyle(1, -1, 1) else createStyle(1, 1, 1)
+        if phase == "entering" then
+            return makeStyle(fromScale(-1, 0), 0, 1)
+        end
+
+        return makeStyle(fromScale(1, 0), 0, 1)
     elseif presetName == "fadeScaleIn" then
-        return if phase == "entering" then createStyle(0.35, 0, 0.92) else createStyle(0, 0, 0.92)
+        if phase == "entering" then
+            return makeStyle(fromScale(0, 0), 1, 0.92)
+        end
+
+        return makeStyle(fromScale(0, 0), 1, 0.92)
     elseif presetName == "fadeOut" then
-        return if phase == "entering" then createStyle(1, 0, 1) else createStyle(0, 0, 1)
+        if phase == "entering" then
+            return ACTIVE_STYLE
+        end
+
+        return makeStyle(fromScale(0, 0), 1, 1)
     end
 
-    return createStyle(1, 0, 1)
+    return ACTIVE_STYLE
 end
 
 return table.freeze(TransitionPresets)

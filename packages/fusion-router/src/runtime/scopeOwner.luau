@@ -56,7 +56,11 @@ local function createScopeOwner(fusion)
             return false
         end
 
-        fusion.doCleanup(scope)
+        if type(scope.doCleanup) == "function" then
+            scope:doCleanup()
+        else
+            fusion.doCleanup(scope)
+        end
 
         entry.scope = nil
         entry.context = nil

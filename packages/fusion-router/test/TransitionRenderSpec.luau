@@ -1,24 +1,8 @@
 local Router = require("../src")
+local TestRouter = require("./TestRouter")
 
-local function createFakeScope()
-    local scope = {}
-
-    function scope:New(className)
-        return function(props)
-            local node = {
-                ClassName = className,
-            }
-
-            for key, value in props do
-                node[key] = value
-            end
-
-            return node
-        end
-    end
-
-    return scope
-end
+local createRouter = TestRouter.createRouter
+local fusion = TestRouter.fusion
 
 local function createScheduler()
     local queue = {}
@@ -69,7 +53,7 @@ end
 
 local function getLayer(root, name)
     for _, child in root.Children do
-        if child.Layer == name then
+        if child.Attributes.LayerName == name then
             return child
         end
     end
@@ -79,7 +63,7 @@ end
 
 local function findRouteNode(layer, routeName)
     for _, child in layer.Children do
-        if child.RouteName == routeName and child.Barrier ~= true then
+        if child.Attributes.RouteName == routeName then
             return child
         end
     end
@@ -90,9 +74,9 @@ end
 return {
     name = "transition presets resolve in the app layer and delayed unmount lasts until the scheduler flushes",
     run = function()
-        local scope = createFakeScope()
+        local scope = fusion:scoped()
         local scheduler = createScheduler()
-        local router = Router.create({
+        local router = createRouter({
             initialScreen = "MainMenu",
             screens = {
                 MainMenu = Router.screen(function()
@@ -139,18 +123,19 @@ return {
         })
 
         local app = Router.App(scope, router, {
+            fusion = fusion,
             scheduler = scheduler,
         })
-        local screenLayer = getLayer(app, "screens")
-        local modalLayer = getLayer(app, "modals")
+        local screenLayer = getLayer(app, "FusionRouterScreens")
+        local modalLayer = getLayer(app, "FusionRouterModals")
 
         router:push("Inventory")
 
         local inventoryNode = findRouteNode(screenLayer, "Inventory")
         assert(
-            inventoryNode.Transition.name == "slideLeft"
-                and inventoryNode.Transition.style.offsetX == 1,
-            "Global screenPush should resolve to the slideLeft preset style"
+            inventoryNode.Attributes.TransitionName == "slideLeft"
+                and inventoryNode.Attributes.TransitionPhase == "entering",
+            "Global screenPush should resolve to the slideLeft preset in the app layer"
         )
         assert(
             scheduler.pendingCount() > 0,
@@ -162,7 +147,7 @@ return {
 
         local shopNode = findRouteNode(screenLayer, "Shop")
         assert(
-            shopNode.Transition.name == "fade" and shopNode.Transition.style.opacity == 0.45,
+            shopNode.Attributes.TransitionName == "fade",
             "Per-screen enterTransition should override the global screenPush preset"
         )
 
@@ -172,8 +157,8 @@ return {
         shopNode = findRouteNode(screenLayer, "Shop")
         assert(
             shopNode ~= nil
-                and shopNode.Transition.name == "fadeOut"
-                and shopNode.Transition.style.opacity == 0,
+                and shopNode.Attributes.RouteState == "exiting"
+                and shopNode.Attributes.TransitionName == "fadeOut",
             "Per-screen exitTransition should override the global screenPop preset"
         )
 
@@ -182,7 +167,7 @@ return {
 
         local confirmNode = findRouteNode(modalLayer, "Confirm")
         assert(
-            confirmNode.Transition.name == "fade" and confirmNode.Transition.style.opacity == 0.45,
+            confirmNode.Attributes.TransitionName == "fade",
             "Global modalOpen should resolve to the fade preset when no override exists"
         )
 
@@ -191,8 +176,7 @@ return {
 
         local settingsNode = findRouteNode(modalLayer, "Settings")
         assert(
-            settingsNode.Transition.name == "fadeScaleIn"
-                and settingsNode.Transition.style.scale == 0.92,
+            settingsNode.Attributes.TransitionName == "fadeScaleIn",
             "Per-modal transition should override the global modalOpen preset"
         )
 
@@ -202,8 +186,8 @@ return {
         settingsNode = findRouteNode(modalLayer, "Settings")
         assert(
             settingsNode ~= nil
-                and settingsNode.State == "exiting"
-                and settingsNode.Transition.name == "fadeScaleIn",
+                and settingsNode.Attributes.RouteState == "exiting"
+                and settingsNode.Attributes.TransitionName == "fadeScaleIn",
             "Modal close should keep the exiting modal rendered until its scheduled transition finishes"
         )
 
