@@ -238,6 +238,29 @@ local function createRouter(config, deps: RouterDeps?)
         return entry
     end
 
+    local function prepareModalEntry(subject, routeName, definition, params)
+        validateRouteParams(subject, definition, params)
+
+        local entry = EntryFactory.createModalEntry(
+            routeName,
+            definition,
+            keyGenerator.nextModalKey(),
+            params
+        )
+
+        ensureEntryContext(entry)
+
+        local canEnter = definition.canEnter
+
+        if canEnter ~= nil and canEnter(entry.context) == false then
+            scopeOwner.cleanup(entry)
+
+            return nil
+        end
+
+        return entry
+    end
+
     local function mountScreenEntry(entry)
         local context = ensureEntryContext(entry)
 
@@ -260,6 +283,17 @@ local function createRouter(config, deps: RouterDeps?)
         return entry
     end
 
+    local function mountModalEntry(entry)
+        local context = ensureEntryContext(entry)
+
+        entry.instance = entry.definition.component(context)
+        entry.isMounted = true
+        entry.state = "active"
+        setEntryActive(entry, true)
+
+        return entry
+    end
+
     local function restoreScreenState(entry, snapshot)
         entry.state = snapshot.state
         setEntryActive(entry, snapshot.isActive)
@@ -269,6 +303,49 @@ local function createRouter(config, deps: RouterDeps?)
         else
             state.retainedScreens[entry.key] = nil
         end
+    end
+
+    local function restoreModalState(entry, snapshot)
+        entry.state = snapshot.state
+        setEntryActive(entry, snapshot.isActive)
+    end
+
+    local function activateUnderlyingModal()
+        local nextModal = state.modalStack[#state.modalStack]
+
+        if nextModal ~= nil then
+            nextModal.state = "active"
+            setEntryActive(nextModal, true)
+        end
+
+        return nextModal
+    end
+
+    local function closeTopModal(subject)
+        local modalCount = #state.modalStack
+
+        if modalCount == 0 then
+            return nil
+        end
+
+        local currentModal = state.modalStack[modalCount]
+        local canExit = currentModal.definition.canExit
+
+        if canExit ~= nil and canExit(currentModal.context) == false then
+            return nil
+        end
+
+        state.currentTransition = currentModal.definition.transition or registries.transitions.modalClose
+
+        local closedModal = table.remove(state.modalStack)
+
+        closedModal.state = "exiting"
+        setEntryActive(closedModal, false)
+        runLifecycleHook(closedModal.definition.onExit, closedModal.context)
+        scopeOwner.cleanup(closedModal)
+        activateUnderlyingModal()
+
+        return closedModal
     end
 
     function router:push(routeName, params)
@@ -451,7 +528,7 @@ local function createRouter(config, deps: RouterDeps?)
 
     function router:back()
         if #state.modalStack > 0 then
-            return table.remove(state.modalStack)
+            return closeTopModal("Router.back")
         end
 
         if #state.screenStack <= 1 then
@@ -527,32 +604,78 @@ local function createRouter(config, deps: RouterDeps?)
 
     function router:pushModal(routeName, params)
         local definition = getModalDefinition(routeName)
-        validateParams("Router.pushModal", params)
-        local entry = EntryFactory.createModalEntry(
-            routeName,
-            definition,
-            keyGenerator.nextModalKey(),
-            params
-        )
+        local entry = prepareModalEntry("Router.pushModal", routeName, definition, params)
 
-        table.insert(state.modalStack, entry)
-
-        return entry
-    end
-
-    function router:popModal()
-        if #state.modalStack == 0 then
+        if entry == nil then
             return nil
         end
 
-        return table.remove(state.modalStack)
+        local currentModal = state.modalStack[#state.modalStack]
+        local currentModalSnapshot = nil
+        local previousTransition = state.currentTransition
+
+        if currentModal ~= nil then
+            currentModalSnapshot = {
+                state = currentModal.state,
+                isActive = ensureActiveState(currentModal).value,
+            }
+
+            setEntryActive(currentModal, false)
+        end
+
+        table.insert(state.modalStack, entry)
+        state.currentTransition = definition.transition or registries.transitions.modalOpen
+
+        local mounted, mountResult = pcall(mountModalEntry, entry)
+
+        if not mounted then
+            table.remove(state.modalStack)
+            state.currentTransition = previousTransition
+            scopeOwner.cleanup(entry)
+
+            if currentModalSnapshot ~= nil then
+                restoreModalState(currentModal, currentModalSnapshot)
+            end
+
+            error(mountResult, 0)
+        end
+
+        local onEnter = definition.onEnter
+
+        if onEnter ~= nil then
+            local entered, enterError = pcall(onEnter, entry.context)
+
+            if not entered then
+                table.remove(state.modalStack)
+                state.currentTransition = previousTransition
+                scopeOwner.cleanup(entry)
+
+                if currentModalSnapshot ~= nil then
+                    restoreModalState(currentModal, currentModalSnapshot)
+                end
+
+                error(enterError, 0)
+            end
+        end
+
+        return mountResult
+    end
+
+    function router:popModal()
+        return closeTopModal("Router.popModal")
     end
 
     function router:closeAllModals()
         local closed = {}
 
         while #state.modalStack > 0 do
-            table.insert(closed, table.remove(state.modalStack))
+            local closedModal = closeTopModal("Router.closeAllModals")
+
+            if closedModal == nil then
+                break
+            end
+
+            table.insert(closed, closedModal)
         end
 
         return closed

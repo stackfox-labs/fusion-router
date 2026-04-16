@@ -14,6 +14,8 @@ local cases: { TestCase } = {
     require("./packages/fusion-router/test/ScreenBackSpec"),
     require("./packages/fusion-router/test/ScreenResetSpec"),
     require("./packages/fusion-router/test/ScreenCloseSpec"),
+    require("./packages/fusion-router/test/ModalPushSpec"),
+    require("./packages/fusion-router/test/ModalCloseSpec"),
     require("./packages/fusion-router/test/SmokeSpec"),
     require("./packages/fusion-router/test/ModalDefinitionSpec"),
     require("./packages/fusion-router/test/OverlayDefinitionSpec"),
