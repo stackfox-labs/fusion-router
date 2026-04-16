@@ -6,6 +6,8 @@ type TestCase = {
 local cases: { TestCase } = {
     require("./packages/fusion-router/test/CreateRouterSpec"),
     require("./packages/fusion-router/test/EntryFactorySpec"),
+    require("./packages/fusion-router/test/InspectionHelpersSpec"),
+    require("./packages/fusion-router/test/NavigationValidationSpec"),
     require("./packages/fusion-router/test/KeyGeneratorSpec"),
     require("./packages/fusion-router/test/SmokeSpec"),
     require("./packages/fusion-router/test/ModalDefinitionSpec"),

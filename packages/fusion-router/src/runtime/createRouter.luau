@@ -14,11 +14,28 @@ local function validateParams(subject, params)
     Validation.expectTableOrNil(subject, params, "params", 2)
 end
 
-local function createRouteLookup(subject, routeMap, routeKind)
+local function createRouteLookup(subject, routeMap, routeKind, otherRouteKinds)
     return function(routeName)
         Validation.expectRouteName(subject, routeName, 2)
 
         local definition = routeMap[routeName]
+
+        if definition ~= nil then
+            return definition
+        end
+
+        if otherRouteKinds ~= nil then
+            for otherRouteKind, otherRouteMap in otherRouteKinds do
+                if otherRouteMap[routeName] ~= nil then
+                    error(
+                        (
+                            "%s expected route '%s' to be a %s route, but it is registered as a %s route"
+                        ):format(subject, routeName, routeKind, otherRouteKind),
+                        3
+                    )
+                end
+            end
+        end
 
         if definition == nil then
             error(
@@ -68,17 +85,27 @@ local function createRouter(config, deps: RouterDeps?)
         _state = state,
     }
 
-    local getScreenDefinition = createRouteLookup("Router.push", registries.screens, "screens")
-    local getModalDefinition = createRouteLookup("Router.pushModal", registries.modals, "modals")
+    local screenRouteKinds = {
+        modal = registries.modals,
+        overlay = registries.overlays,
+    }
+    local modalRouteKinds = {
+        screen = registries.screens,
+        overlay = registries.overlays,
+    }
+
+    local getScreenDefinition =
+        createRouteLookup("Router.push", registries.screens, "screen", screenRouteKinds)
+    local getModalDefinition =
+        createRouteLookup("Router.pushModal", registries.modals, "modal", modalRouteKinds)
     local getResetScreenDefinition =
-        createRouteLookup("Router.reset", registries.screens, "screens")
+        createRouteLookup("Router.reset", registries.screens, "screen", screenRouteKinds)
     local getReplaceScreenDefinition =
-        createRouteLookup("Router.replace", registries.screens, "screens")
+        createRouteLookup("Router.replace", registries.screens, "screen", screenRouteKinds)
 
     function router:push(routeName, params)
-        validateParams("Router.push", params)
-
         local definition = getScreenDefinition(routeName)
+        validateParams("Router.push", params)
         local entry = EntryFactory.createScreenEntry(
             routeName,
             definition,
@@ -92,9 +119,8 @@ local function createRouter(config, deps: RouterDeps?)
     end
 
     function router:replace(routeName, params)
-        validateParams("Router.replace", params)
-
         local definition = getReplaceScreenDefinition(routeName)
+        validateParams("Router.replace", params)
         local entry = EntryFactory.createScreenEntry(
             routeName,
             definition,
@@ -124,9 +150,8 @@ local function createRouter(config, deps: RouterDeps?)
     end
 
     function router:reset(routeName, params)
-        validateParams("Router.reset", params)
-
         local definition = getResetScreenDefinition(routeName)
+        validateParams("Router.reset", params)
         local entry = EntryFactory.createScreenEntry(
             routeName,
             definition,
@@ -144,9 +169,8 @@ local function createRouter(config, deps: RouterDeps?)
     end
 
     function router:pushModal(routeName, params)
-        validateParams("Router.pushModal", params)
-
         local definition = getModalDefinition(routeName)
+        validateParams("Router.pushModal", params)
         local entry = EntryFactory.createModalEntry(
             routeName,
             definition,
