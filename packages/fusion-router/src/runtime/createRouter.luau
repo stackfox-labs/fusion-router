@@ -168,6 +168,8 @@ local function createRouter(config, deps: RouterDeps?)
         retainedScreens = {},
         currentTransition = nil,
     }
+    local retainedKeepAlive = {}
+    local retainedSingleton = {}
 
     local router = {
         _registries = registries,
@@ -210,32 +212,134 @@ local function createRouter(config, deps: RouterDeps?)
         return context
     end
 
-    local function createGuardedScreenEntry(routeName, definition, params)
-        local entry = EntryFactory.createScreenEntry(
-            routeName,
-            definition,
-            keyGenerator.nextScreenKey(),
-            params
-        )
+    local function removeKeepAliveEntry(entry)
+        local bucket = retainedKeepAlive[entry.name]
+
+        if bucket == nil then
+            return
+        end
+
+        local index = table.find(bucket, entry)
+
+        if index ~= nil then
+            table.remove(bucket, index)
+        end
+
+        if #bucket == 0 then
+            retainedKeepAlive[entry.name] = nil
+        end
+    end
+
+    local function removeRetainedEntry(entry)
+        state.retainedScreens[entry.key] = nil
+
+        if entry.retention == "singleton" then
+            if retainedSingleton[entry.name] == entry then
+                retainedSingleton[entry.name] = nil
+            end
+        elseif entry.retention == "keepAlive" then
+            removeKeepAliveEntry(entry)
+        end
+    end
+
+    local function storeRetainedEntry(entry)
+        state.retainedScreens[entry.key] = entry
+
+        if entry.retention == "singleton" then
+            local existing = retainedSingleton[entry.name]
+
+            if existing ~= nil and existing ~= entry then
+                removeRetainedEntry(existing)
+                existing.state = "exiting"
+                setEntryActive(existing, false)
+                runLifecycleHook(existing.definition.onExit, existing.context)
+                scopeOwner.cleanup(existing)
+            end
+
+            retainedSingleton[entry.name] = entry
+        elseif entry.retention == "keepAlive" then
+            local bucket = retainedKeepAlive[entry.name]
+
+            if bucket == nil then
+                bucket = {}
+                retainedKeepAlive[entry.name] = bucket
+            end
+
+            if table.find(bucket, entry) == nil then
+                table.insert(bucket, entry)
+            end
+        end
+    end
+
+    local function takeReusableScreenEntry(routeName, definition, params)
+        local entry = nil
+
+        if definition.retention == "singleton" then
+            entry = retainedSingleton[routeName]
+
+            if entry ~= nil then
+                retainedSingleton[routeName] = nil
+            end
+        elseif definition.retention == "keepAlive" then
+            local bucket = retainedKeepAlive[routeName]
+
+            if bucket ~= nil then
+                entry = table.remove(bucket)
+
+                if #bucket == 0 then
+                    retainedKeepAlive[routeName] = nil
+                end
+            end
+        end
+
+        if entry == nil then
+            return nil, false
+        end
+
+        state.retainedScreens[entry.key] = nil
+        entry.params = params
+        entry.context = nil
 
         ensureEntryContext(entry)
 
-        return entry
+        return entry, true
+    end
+
+    local function createGuardedScreenEntry(routeName, definition, params)
+        local entry, reused = takeReusableScreenEntry(routeName, definition, params)
+
+        if entry == nil then
+            entry = EntryFactory.createScreenEntry(
+                routeName,
+                definition,
+                keyGenerator.nextScreenKey(),
+                params
+            )
+            reused = false
+        end
+
+        ensureEntryContext(entry)
+
+        return entry, reused
     end
 
     local function prepareScreenEntry(subject, routeName, definition, params)
         validateRouteParams(subject, definition, params)
 
-        local entry = createGuardedScreenEntry(routeName, definition, params)
+        local entry, reused = createGuardedScreenEntry(routeName, definition, params)
         local canEnter = definition.canEnter
 
         if canEnter ~= nil and canEnter(entry.context) == false then
-            scopeOwner.cleanup(entry)
+            if reused then
+                storeRetainedEntry(entry)
+            else
+                scopeOwner.cleanup(entry)
+            end
 
-            return nil
+            return nil, false
         end
 
-        return entry
+        return entry, reused
     end
 
     local function prepareModalEntry(subject, routeName, definition, params)
@@ -270,6 +374,18 @@ local function createRouter(config, deps: RouterDeps?)
         setEntryActive(entry, true)
 
         return entry
+    end
+
+    local function activateScreenEntry(entry, reused)
+        if reused and entry.isMounted and entry.scope ~= nil and entry.instance ~= nil then
+            ensureEntryContext(entry)
+            entry.state = "active"
+            setEntryActive(entry, true)
+
+            return entry
+        end
+
+        return mountScreenEntry(entry)
     end
 
     local function resumeScreenEntry(entry)
@@ -350,7 +466,7 @@ local function createRouter(config, deps: RouterDeps?)
 
     function router:push(routeName, params)
         local definition = getScreenDefinition(routeName)
-        local entry = prepareScreenEntry("Router.push", routeName, definition, params)
+        local entry, reused = prepareScreenEntry("Router.push", routeName, definition, params)
 
         if entry == nil then
             return nil
@@ -384,16 +500,23 @@ local function createRouter(config, deps: RouterDeps?)
                         error(pauseError, 0)
                     end
                 end
+            else
+                state.retainedScreens[currentScreen.key] = nil
             end
         end
 
         table.insert(state.screenStack, entry)
 
-        local mounted, mountResult = pcall(mountScreenEntry, entry)
+        local mounted, mountResult = pcall(activateScreenEntry, entry, reused)
 
         if not mounted then
             table.remove(state.screenStack)
-            scopeOwner.cleanup(entry)
+
+            if reused then
+                storeRetainedEntry(entry)
+            else
+                scopeOwner.cleanup(entry)
+            end
 
             if currentScreenSnapshot ~= nil then
                 restoreScreenState(currentScreen, currentScreenSnapshot)
@@ -409,7 +532,12 @@ local function createRouter(config, deps: RouterDeps?)
 
             if not entered then
                 table.remove(state.screenStack)
-                scopeOwner.cleanup(entry)
+
+                if reused then
+                    storeRetainedEntry(entry)
+                else
+                    scopeOwner.cleanup(entry)
+                end
 
                 if currentScreenSnapshot ~= nil then
                     restoreScreenState(currentScreen, currentScreenSnapshot)
@@ -417,6 +545,10 @@ local function createRouter(config, deps: RouterDeps?)
 
                 error(enterError, 0)
             end
+        end
+
+        if currentScreen ~= nil and not currentScreen.retained then
+            scopeOwner.cleanup(currentScreen)
         end
 
         return mountResult
@@ -446,7 +578,7 @@ local function createRouter(config, deps: RouterDeps?)
 
     function router:replace(routeName, params)
         local definition = getReplaceScreenDefinition(routeName)
-        local entry = prepareScreenEntry("Router.replace", routeName, definition, params)
+        local entry, reused = prepareScreenEntry("Router.replace", routeName, definition, params)
 
         if entry == nil then
             return nil
@@ -476,12 +608,10 @@ local function createRouter(config, deps: RouterDeps?)
 
             if currentScreen.retained then
                 currentScreen.state = "paused"
-                state.retainedScreens[currentScreen.key] = currentScreen
             else
                 currentScreen.state = "exiting"
                 state.retainedScreens[currentScreen.key] = nil
                 runLifecycleHook(currentScreen.definition.onExit, currentScreen.context)
-                scopeOwner.cleanup(currentScreen)
             end
         end
 
@@ -491,7 +621,7 @@ local function createRouter(config, deps: RouterDeps?)
             state.screenStack[currentIndex] = entry
         end
 
-        local mounted, mountResult = pcall(mountScreenEntry, entry)
+        local mounted, mountResult = pcall(activateScreenEntry, entry, reused)
 
         if not mounted then
             if currentIndex == 0 then
@@ -501,7 +631,11 @@ local function createRouter(config, deps: RouterDeps?)
                 restoreScreenState(currentScreen, currentScreenSnapshot)
             end
 
-            scopeOwner.cleanup(entry)
+            if reused then
+                storeRetainedEntry(entry)
+            else
+                scopeOwner.cleanup(entry)
+            end
             error(mountResult, 0)
         end
 
@@ -518,8 +652,20 @@ local function createRouter(config, deps: RouterDeps?)
                     restoreScreenState(currentScreen, currentScreenSnapshot)
                 end
 
-                scopeOwner.cleanup(entry)
+                if reused then
+                    storeRetainedEntry(entry)
+                else
+                    scopeOwner.cleanup(entry)
+                end
                 error(enterError, 0)
+            end
+        end
+
+        if currentScreen ~= nil then
+            if currentScreen.retained then
+                storeRetainedEntry(currentScreen)
+            else
+                scopeOwner.cleanup(currentScreen)
             end
         end
 
@@ -546,11 +692,17 @@ local function createRouter(config, deps: RouterDeps?)
         local shouldResumePrevious = previousScreen ~= nil and previousScreen.state == "paused"
         local poppedScreen = table.remove(state.screenStack)
 
-        poppedScreen.state = "exiting"
         setEntryActive(poppedScreen, false)
-        state.retainedScreens[poppedScreen.key] = nil
-        runLifecycleHook(poppedScreen.definition.onExit, poppedScreen.context)
-        scopeOwner.cleanup(poppedScreen)
+
+        if poppedScreen.retained then
+            poppedScreen.state = "paused"
+            storeRetainedEntry(poppedScreen)
+        else
+            poppedScreen.state = "exiting"
+            state.retainedScreens[poppedScreen.key] = nil
+            runLifecycleHook(poppedScreen.definition.onExit, poppedScreen.context)
+            scopeOwner.cleanup(poppedScreen)
+        end
 
         if previousScreen ~= nil then
             resumeScreenEntry(previousScreen)
@@ -565,7 +717,7 @@ local function createRouter(config, deps: RouterDeps?)
 
     function router:reset(routeName, params)
         local definition = getResetScreenDefinition(routeName)
-        local entry = prepareScreenEntry("Router.reset", routeName, definition, params)
+        local entry, reused = prepareScreenEntry("Router.reset", routeName, definition, params)
 
         if entry == nil then
             return nil
@@ -585,15 +737,21 @@ local function createRouter(config, deps: RouterDeps?)
         clearArray(state.screenStack)
         clearArray(state.overlayEntries)
         clearArray(state.retainedScreens)
+        retainedKeepAlive = {}
+        retainedSingleton = {}
         state.currentTransition = nil
 
         table.insert(state.screenStack, entry)
 
-        local mounted, mountResult = pcall(mountScreenEntry, entry)
+        local mounted, mountResult = pcall(activateScreenEntry, entry, reused)
 
         if not mounted then
             table.remove(state.screenStack)
-            scopeOwner.cleanup(entry)
+            if reused then
+                storeRetainedEntry(entry)
+            else
+                scopeOwner.cleanup(entry)
+            end
             error(mountResult, 0)
         end
 
@@ -667,6 +825,18 @@ local function createRouter(config, deps: RouterDeps?)
 
     function router:closeAllModals()
         local closed = {}
+        local originalTransition = state.currentTransition
+
+        for index = #state.modalStack, 1, -1 do
+            local modalEntry = state.modalStack[index]
+            local canExit = modalEntry.definition.canExit
+
+            if canExit ~= nil and canExit(modalEntry.context) == false then
+                state.currentTransition = originalTransition
+
+                return {}
+            end
+        end
 
         while #state.modalStack > 0 do
             local closedModal = closeTopModal("Router.closeAllModals")
