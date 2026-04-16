@@ -32,9 +32,12 @@ local function createRouteLookup(subject, routeMap, routeKind, otherRouteKinds)
             for otherRouteKind, otherRouteMap in otherRouteKinds do
                 if otherRouteMap[routeName] ~= nil then
                     error(
-                        (
-                            "%s expected route '%s' to be a %s route, but it is registered as a %s route"
-                        ):format(subject, routeName, routeKind, otherRouteKind),
+                        ("%s expected route '%s' to be a %s route, but it is registered as a %s route"):format(
+                            subject,
+                            routeName,
+                            routeKind,
+                            otherRouteKind
+                        ),
                         3
                     )
                 end
@@ -55,6 +58,12 @@ end
 local function clearArray(list)
     for index = #list, 1, -1 do
         list[index] = nil
+    end
+end
+
+local function clearMap(map)
+    for key in map do
+        map[key] = nil
     end
 end
 
@@ -150,8 +159,9 @@ local function createRouter(config, deps: RouterDeps?)
     local keyGenerator = keyGeneratorFactory()
     local routeContextFactory = resolvedDeps.createRouteContext or createRouteContext
     local scopeOwnerFactory = resolvedDeps.createScopeOwner
-    local scopeOwner =
-        if scopeOwnerFactory ~= nil then scopeOwnerFactory(resolvedDeps.fusion) else createBasicScopeOwner()
+    local scopeOwner = if scopeOwnerFactory ~= nil
+        then scopeOwnerFactory(resolvedDeps.fusion)
+        else createBasicScopeOwner()
 
     local registries = {
         screens = config.screens,
@@ -410,6 +420,124 @@ local function createRouter(config, deps: RouterDeps?)
         return entry
     end
 
+    local function resolveOverlayVisibility(entry)
+        local visibleSource = entry.visible
+
+        if visibleSource == nil then
+            return true
+        end
+
+        if type(visibleSource) == "boolean" then
+            return visibleSource
+        end
+
+        local fusion = resolvedDeps.fusion
+
+        if fusion ~= nil and type(fusion.peek) == "function" then
+            local peeked, visibleValue = pcall(fusion.peek, visibleSource)
+
+            if not peeked then
+                error(visibleValue, 0)
+            end
+
+            return not not visibleValue
+        end
+
+        if type(visibleSource) == "table" then
+            local rawValue = rawget(visibleSource, "value")
+
+            if type(rawValue) == "boolean" then
+                return rawValue
+            end
+
+            local currentValue = rawget(visibleSource, "current")
+
+            if type(currentValue) == "boolean" then
+                return currentValue
+            end
+        end
+
+        return not not visibleSource
+    end
+
+    local function mountOverlayEntry(entry)
+        local context = ensureEntryContext(entry)
+
+        entry.instance = entry.definition.component(context)
+        entry.isMounted = true
+
+        return entry
+    end
+
+    local syncOverlayEntry
+
+    local function subscribeOverlayVisibility(entry)
+        local visibleSource = entry.visible
+
+        if type(visibleSource) ~= "table" then
+            return
+        end
+
+        local subscribe = visibleSource.subscribe or visibleSource.onChange
+
+        if type(subscribe) ~= "function" then
+            return
+        end
+
+        local disconnect = subscribe(visibleSource, function()
+            syncOverlayEntry(entry)
+        end)
+
+        if type(disconnect) == "function" then
+            entry.visibilityCleanup = disconnect
+        end
+    end
+
+    function syncOverlayEntry(entry)
+        local isVisible = resolveOverlayVisibility(entry)
+        local shouldMount = entry.persistent or isVisible
+
+        entry.isVisible = isVisible
+
+        if shouldMount and not entry.isMounted then
+            mountOverlayEntry(entry)
+            runLifecycleHook(entry.definition.onEnter, entry.context)
+        elseif not shouldMount and entry.isMounted then
+            runLifecycleHook(entry.definition.onExit, entry.context)
+            scopeOwner.cleanup(entry)
+        end
+
+        if entry.isMounted then
+            entry.state = if isVisible then "active" else "hidden"
+        else
+            entry.state = "inactive"
+        end
+
+        setEntryActive(entry, entry.isMounted and isVisible)
+
+        return entry
+    end
+
+    local function registerOverlays()
+        clearArray(state.overlayEntries)
+
+        local entries = {}
+
+        for routeName, definition in registries.overlays do
+            table.insert(entries, EntryFactory.createOverlayEntry(routeName, definition))
+        end
+
+        table.sort(entries, function(left, right)
+            return left.name < right.name
+        end)
+
+        for _, entry in entries do
+            subscribeOverlayVisibility(entry)
+            syncOverlayEntry(entry)
+            table.insert(state.overlayEntries, entry)
+        end
+    end
+
     local function restoreScreenState(entry, snapshot)
         entry.state = snapshot.state
         setEntryActive(entry, snapshot.isActive)
@@ -437,7 +565,7 @@ local function createRouter(config, deps: RouterDeps?)
         return nextModal
     end
 
-    local function closeTopModal(subject)
+    local function closeTopModal()
         local modalCount = #state.modalStack
 
         if modalCount == 0 then
@@ -451,7 +579,8 @@ local function createRouter(config, deps: RouterDeps?)
             return nil
         end
 
-        state.currentTransition = currentModal.definition.transition or registries.transitions.modalClose
+        state.currentTransition = currentModal.definition.transition
+            or registries.transitions.modalClose
 
         local closedModal = table.remove(state.modalStack)
 
@@ -674,7 +803,7 @@ local function createRouter(config, deps: RouterDeps?)
 
     function router:back()
         if #state.modalStack > 0 then
-            return closeTopModal("Router.back")
+            return closeTopModal()
         end
 
         if #state.screenStack <= 1 then
@@ -735,8 +864,7 @@ local function createRouter(config, deps: RouterDeps?)
 
         clearArray(state.modalStack)
         clearArray(state.screenStack)
-        clearArray(state.overlayEntries)
-        clearArray(state.retainedScreens)
+        clearMap(state.retainedScreens)
         retainedKeepAlive = {}
         retainedSingleton = {}
         state.currentTransition = nil
@@ -820,7 +948,7 @@ local function createRouter(config, deps: RouterDeps?)
     end
 
     function router:popModal()
-        return closeTopModal("Router.popModal")
+        return closeTopModal()
     end
 
     function router:closeAllModals()
@@ -839,7 +967,7 @@ local function createRouter(config, deps: RouterDeps?)
         end
 
         while #state.modalStack > 0 do
-            local closedModal = closeTopModal("Router.closeAllModals")
+            local closedModal = closeTopModal()
 
             if closedModal == nil then
                 break
@@ -874,6 +1002,7 @@ local function createRouter(config, deps: RouterDeps?)
     end
 
     router:push(config.initialScreen)
+    registerOverlays()
 
     return table.freeze(router)
 end

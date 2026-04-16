@@ -83,10 +83,7 @@ return {
             router:getCurrentModal().params.productId == 42,
             "getCurrentModal should preserve modal params"
         )
-        assert(
-            router:canGoBack() == true,
-            "canGoBack should stay true while a modal is open"
-        )
+        assert(router:canGoBack() == true, "canGoBack should stay true while a modal is open")
 
         local settingsModal = router:pushModal("Settings")
 

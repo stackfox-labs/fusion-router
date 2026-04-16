@@ -91,9 +91,15 @@ return {
             overlayEntry.kind == "overlay",
             "Overlay entries should be tagged with kind='overlay'"
         )
+        assert(
+            overlayEntry.key == "overlay_Toasts",
+            "Overlay entries should derive a stable runtime key from the route name"
+        )
         assert(overlayEntry.name == "Toasts", "Overlay entries should preserve the route name")
         assert(overlayEntry.persistent == false, "Overlay entries should preserve persistent")
         assert(overlayEntry.visible == true, "Overlay entries should preserve visible")
+        assert(overlayEntry.isVisible == false, "Overlay entries should start hidden")
+        assert(overlayEntry.state == "inactive", "Overlay entries should start inactive")
         assert(
             overlayEntry.definition == overlayDefinition,
             "Overlay entries should keep the definition reference"
@@ -106,6 +112,10 @@ return {
             "Overlay entries should start without cleanup bookkeeping"
         )
         assert(overlayEntry.isMounted == false, "Overlay entries should start unmounted")
+        assert(
+            overlayEntry.visibilityCleanup == nil,
+            "Overlay entries should start without visibility subscriptions"
+        )
         expectError(function()
             EntryFactory.createScreenEntry("", screenDefinition, "screen_1")
         end, "EntryFactory.createScreenEntry expected route name to be a non-empty string")

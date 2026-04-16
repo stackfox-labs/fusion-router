@@ -39,7 +39,10 @@ return {
                     end,
                     canEnter = function(ctx)
                         table.insert(callLog, "confirm:canEnter")
-                        assert(ctx.routeName == "Confirm", "modal canEnter should receive modal context")
+                        assert(
+                            ctx.routeName == "Confirm",
+                            "modal canEnter should receive modal context"
+                        )
 
                         return true
                     end,
@@ -143,8 +146,14 @@ return {
         local rejectedEntry = router:pushModal("Locked")
 
         assert(rejectedEntry == nil, "pushModal should return nil when canEnter blocks opening")
-        assert(#router._state.modalStack == 2, "guard-blocked pushModal should not mutate the modal stack")
-        assert(router:getCurrentModal() == settingsEntry, "guard-blocked pushModal should preserve the active modal")
+        assert(
+            #router._state.modalStack == 2,
+            "guard-blocked pushModal should not mutate the modal stack"
+        )
+        assert(
+            router:getCurrentModal() == settingsEntry,
+            "guard-blocked pushModal should preserve the active modal"
+        )
         assert(
             callLog[1] == "locked:canEnter",
             "pushModal should run canEnter before mounting blocked modals"
@@ -163,7 +172,10 @@ return {
             #router._state.modalStack == 2,
             "param validation failures should not mutate the modal stack"
         )
-        assert(router:getCurrentModal() == settingsEntry, "param failures should preserve the active modal")
+        assert(
+            router:getCurrentModal() == settingsEntry,
+            "param failures should preserve the active modal"
+        )
         assert(
             callLog[1] == "confirm:validateParams",
             "pushModal should validate route params before guards or mount work"

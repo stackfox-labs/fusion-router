@@ -118,7 +118,9 @@ return {
             "replace should exit destroy screens before mounting and entering the replacement"
         )
         assert(
-            inventoryEntry.scope == nil and inventoryEntry.context == nil and inventoryEntry.instance == nil,
+            inventoryEntry.scope == nil
+                and inventoryEntry.context == nil
+                and inventoryEntry.instance == nil,
             "Destroy replaced screens should clean up scope, context, and instance"
         )
         assert(

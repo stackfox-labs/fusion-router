@@ -52,8 +52,14 @@ return {
         })
 
         local function expectUnchangedState()
-            assert(#router._state.screenStack == 1, "Failed navigation should not change screen stack")
-            assert(#router._state.modalStack == 0, "Failed navigation should not change modal stack")
+            assert(
+                #router._state.screenStack == 1,
+                "Failed navigation should not change screen stack"
+            )
+            assert(
+                #router._state.modalStack == 0,
+                "Failed navigation should not change modal stack"
+            )
             assert(
                 router:getCurrentScreen().name == "MainMenu",
                 "Failed navigation should preserve the current screen"
@@ -74,9 +80,12 @@ return {
         end, "Router.push expected route 'Missing' to exist in screen")
         expectUnchangedState()
 
-        expectError(function()
-            router:push("ConfirmPurchase")
-        end, "Router.push expected route 'ConfirmPurchase' to be a screen route, but it is registered as a modal route")
+        expectError(
+            function()
+                router:push("ConfirmPurchase")
+            end,
+            "Router.push expected route 'ConfirmPurchase' to be a screen route, but it is registered as a modal route"
+        )
         expectUnchangedState()
 
         expectError(function()
@@ -84,9 +93,12 @@ return {
         end, "Router.replace expected route 'Missing' to exist in screen")
         expectUnchangedState()
 
-        expectError(function()
-            router:replace("ConfirmPurchase")
-        end, "Router.replace expected route 'ConfirmPurchase' to be a screen route, but it is registered as a modal route")
+        expectError(
+            function()
+                router:replace("ConfirmPurchase")
+            end,
+            "Router.replace expected route 'ConfirmPurchase' to be a screen route, but it is registered as a modal route"
+        )
         expectUnchangedState()
 
         expectError(function()
@@ -94,9 +106,12 @@ return {
         end, "Router.reset expected route 'Missing' to exist in screen")
         expectUnchangedState()
 
-        expectError(function()
-            router:reset("ConfirmPurchase")
-        end, "Router.reset expected route 'ConfirmPurchase' to be a screen route, but it is registered as a modal route")
+        expectError(
+            function()
+                router:reset("ConfirmPurchase")
+            end,
+            "Router.reset expected route 'ConfirmPurchase' to be a screen route, but it is registered as a modal route"
+        )
         expectUnchangedState()
 
         expectError(function()
@@ -104,9 +119,12 @@ return {
         end, "Router.pushModal expected route 'Missing' to exist in modal")
         expectUnchangedState()
 
-        expectError(function()
-            router:pushModal("MainMenu")
-        end, "Router.pushModal expected route 'MainMenu' to be a modal route, but it is registered as a screen route")
+        expectError(
+            function()
+                router:pushModal("MainMenu")
+            end,
+            "Router.pushModal expected route 'MainMenu' to be a modal route, but it is registered as a screen route"
+        )
         expectUnchangedState()
     end,
 }

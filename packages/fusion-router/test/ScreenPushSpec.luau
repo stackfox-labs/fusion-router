@@ -48,7 +48,10 @@ return {
                     end,
                     canEnter = function(ctx)
                         table.insert(callLog, "inventory:canEnter")
-                        assert(ctx.routeName == "Inventory", "canEnter should receive the entry context")
+                        assert(
+                            ctx.routeName == "Inventory",
+                            "canEnter should receive the entry context"
+                        )
 
                         return true
                     end,
@@ -156,6 +159,9 @@ return {
             callLog[1] == "inventory:validateParams",
             "push should validate route params before guards or mounting"
         )
-        assert(#callLog == 1, "Param validation failures should stop before further navigation work")
+        assert(
+            #callLog == 1,
+            "Param validation failures should stop before further navigation work"
+        )
     end,
 }

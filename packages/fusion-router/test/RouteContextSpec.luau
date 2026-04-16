@@ -144,12 +144,26 @@ return {
             createRouteContext(nil, fakeRouter)
         end, "createRouteContext expected entry to be a table, got nil")
 
-        expectError(function()
-            createRouteContext(
-                EntryFactory.createOverlayEntry("Toasts", Router.overlay(noop)),
-                fakeRouter
-            )
-        end, "createRouteContext expected entry.kind to be 'screen' or 'modal'")
+        local overlayEntry = EntryFactory.createOverlayEntry("Toasts", Router.overlay(noop))
+        overlayEntry.scope = {
+            id = "scope-overlay-toasts",
+        }
+
+        local overlayContext = createRouteContext(overlayEntry, fakeRouter)
+        local beforeOverlayCloseCalls = #calls
+
+        overlayContext:push("Shop")
+        overlayContext.close()
+
+        assert(
+            overlayContext.routeKey == "overlay_Toasts",
+            "Overlay contexts should expose the derived overlay route key"
+        )
+        assert(calls[9].method == "push", "overlay ctx:push should call router.push")
+        assert(
+            #calls == beforeOverlayCloseCalls + 1,
+            "overlay ctx.close should be a no-op by default"
+        )
 
         expectError(function()
             createRouteContext(

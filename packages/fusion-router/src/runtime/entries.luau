@@ -78,15 +78,19 @@ function EntryFactory.createOverlayEntry(name, definition)
 
     local entry = {
         kind = "overlay",
+        key = ("overlay_%s"):format(name),
         name = name,
         persistent = definition.persistent,
         visible = definition.visible,
+        isVisible = false,
+        state = "inactive",
         definition = definition,
         scope = nil,
         context = nil,
         instance = nil,
         cleanup = nil,
         isMounted = false,
+        visibilityCleanup = nil,
     }
 
     return entry

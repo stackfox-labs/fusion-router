@@ -70,7 +70,7 @@ return {
             },
         })
 
-        local screenEntry = router:getCurrentScreen()
+        router:getCurrentScreen()
         local confirmEntry = router:pushModal("Confirm")
         local settingsEntry = router:pushModal("Settings")
         callLog = {}
@@ -78,14 +78,19 @@ return {
         local poppedSettings = router:popModal()
 
         assert(poppedSettings == settingsEntry, "popModal should return the closed topmost modal")
-        assert(router:getCurrentModal() == confirmEntry, "popModal should reactivate the modal underneath")
+        assert(
+            router:getCurrentModal() == confirmEntry,
+            "popModal should reactivate the modal underneath"
+        )
         assert(#router._state.modalStack == 1, "popModal should remove exactly one modal")
         assert(
             callLog[1] == "settings:canExit" and callLog[2] == "settings:onExit",
             "popModal should run canExit before onExit for the active modal"
         )
         assert(
-            settingsEntry.scope == nil and settingsEntry.context == nil and settingsEntry.instance == nil,
+            settingsEntry.scope == nil
+                and settingsEntry.context == nil
+                and settingsEntry.instance == nil,
             "popModal should clean up the closed modal"
         )
         assert(settingsEntry.isMounted == false, "popModal should unmount the closed modal")
@@ -185,8 +190,14 @@ return {
             closedModals[1] == closeAllSettings and closedModals[2] == closeAllConfirm,
             "closeAllModals should close modals in deterministic top-down order"
         )
-        assert(closeAllRouter:getCurrentModal() == nil, "closeAllModals should leave no active modals")
-        assert(#closeAllRouter._state.modalStack == 0, "closeAllModals should empty the modal stack")
+        assert(
+            closeAllRouter:getCurrentModal() == nil,
+            "closeAllModals should leave no active modals"
+        )
+        assert(
+            #closeAllRouter._state.modalStack == 0,
+            "closeAllModals should empty the modal stack"
+        )
         assert(
             callLog[1] == "settings:onExit" and callLog[2] == "confirm:onExit",
             "closeAllModals should run modal exit hooks in top-down order"
@@ -223,7 +234,10 @@ return {
 
         local successfulClose = closeActiveModal.context:close()
 
-        assert(successfulClose == closeActiveModal, "modal ctx.close should return the popped modal")
+        assert(
+            successfulClose == closeActiveModal,
+            "modal ctx.close should return the popped modal"
+        )
         assert(
             closeActiveRouter:getCurrentModal() == nil,
             "modal ctx.close should close only the active modal layer"

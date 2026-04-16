@@ -82,7 +82,9 @@ return {
             "back should restore the previous screen active state"
         )
         assert(
-            inventoryEntry.scope == nil and inventoryEntry.context == nil and inventoryEntry.instance == nil,
+            inventoryEntry.scope == nil
+                and inventoryEntry.context == nil
+                and inventoryEntry.instance == nil,
             "back should clean up the popped screen when it exits"
         )
         assert(inventoryEntry.isMounted == false, "back should unmount the popped screen")

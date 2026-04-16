@@ -75,6 +75,10 @@ return {
             "Router should initialize overlay state"
         )
         assert(
+            #router._state.overlayEntries == 1,
+            "Router.create should register one runtime overlay entry per overlay definition"
+        )
+        assert(
             type(router._state.retainedScreens) == "table",
             "Router should initialize retained screen state"
         )
@@ -88,6 +92,14 @@ return {
             "Router should keep modal registries"
         )
         assert(router._registries.overlays.Toasts ~= nil, "Router should keep overlay registries")
+        assert(
+            router._state.overlayEntries[1].name == "Toasts",
+            "Router.create should preserve overlay route names in runtime state"
+        )
+        assert(
+            router._state.overlayEntries[1].isMounted == true,
+            "Persistent overlays should mount during router creation"
+        )
         assert(
             router._registries.transitions.screenPush == "slideLeft",
             "Router should keep transition registries"

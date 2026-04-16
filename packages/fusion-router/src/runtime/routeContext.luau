@@ -36,8 +36,8 @@ local function validateEntry(subject, entry)
         error(("%s expected entry to be a table, got nil"):format(subject), 2)
     end
 
-    if entry.kind ~= "screen" and entry.kind ~= "modal" then
-        error(("%s expected entry.kind to be 'screen' or 'modal'"):format(subject), 2)
+    if entry.kind ~= "screen" and entry.kind ~= "modal" and entry.kind ~= "overlay" then
+        error(("%s expected entry.kind to be 'screen', 'modal', or 'overlay'"):format(subject), 2)
     end
 
     Validation.expectRouteName(subject, entry.name, 1)
@@ -93,8 +93,12 @@ local function createRouteContext(entry, router, isActive)
 
     if entry.kind == "modal" then
         context.close = bindNoArgMethod(router, "popModal")
-    else
+    elseif entry.kind == "screen" then
         context.close = bindNoArgMethod(router, "back")
+    else
+        context.close = function()
+            return nil
+        end
     end
 
     context = table.freeze(context)

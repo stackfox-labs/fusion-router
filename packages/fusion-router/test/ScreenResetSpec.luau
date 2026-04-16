@@ -89,8 +89,14 @@ return {
         assert(resetEntry == router:getCurrentScreen(), "reset should make the new root active")
         assert(#router._state.screenStack == 1, "reset should replace the whole screen stack")
         assert(#router._state.modalStack == 0, "reset should clear active modals")
-        assert(next(router._state.retainedScreens) == nil, "reset should clear retained screen state")
-        assert(router._state.currentTransition == nil, "reset should clear current transition state")
+        assert(
+            next(router._state.retainedScreens) == nil,
+            "reset should clear retained screen state"
+        )
+        assert(
+            router._state.currentTransition == nil,
+            "reset should clear current transition state"
+        )
         assert(
             callLog[1] == "shop:validateParams"
                 and callLog[2] == "shop:canEnter"
@@ -105,7 +111,9 @@ return {
             "reset should clean up retained screens that are no longer valid"
         )
         assert(
-            inventoryEntry.scope == nil and inventoryEntry.context == nil and inventoryEntry.instance == nil,
+            inventoryEntry.scope == nil
+                and inventoryEntry.context == nil
+                and inventoryEntry.instance == nil,
             "reset should clean up the active replaced screen"
         )
         assert(mainEntry.isMounted == false, "reset should unmount retained screens")
@@ -113,7 +121,10 @@ return {
         assert(resetEntry.state == "active", "reset should mount the new root as active")
         assert(resetEntry.scope ~= nil, "reset should attach a scope to the new root")
         assert(resetEntry.context ~= nil, "reset should create route context for the new root")
-        assert(resetEntry.instance.id == "shop-instance", "reset should mount the new root instance")
+        assert(
+            resetEntry.instance.id == "shop-instance",
+            "reset should mount the new root instance"
+        )
         assert(
             resetEntry.context.params.tab == "Featured",
             "reset should expose new params through the new root context"
@@ -128,7 +139,10 @@ return {
             router:getCurrentScreen() == resetEntry,
             "canEnter-blocked reset should preserve the current active screen"
         )
-        assert(#router._state.screenStack == 1, "canEnter-blocked reset should preserve stack depth")
+        assert(
+            #router._state.screenStack == 1,
+            "canEnter-blocked reset should preserve stack depth"
+        )
         assert(
             callLog[1] == "locked:canEnter",
             "reset should check canEnter before tearing down existing screens"
