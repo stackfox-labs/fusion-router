@@ -1,5 +1,3 @@
-# FusionRouter
-
 <p align="center">
   <img src="./assets/FusionRouterBanner.png" width="540" />
 </p>
