@@ -1,0 +1,26 @@
+{
+  "name": "fusion-router-sandbox",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "Packages": {
+        "$className": "Folder",
+        "$path": "packages/fusion-router/Packages",
+        "FusionRouter": {
+          "$path": "packages/fusion-router/src"
+        }
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterCharacterScripts": {
+        "$className": "StarterCharacterScripts",
+        "Sandbox": {
+          "$className": "Folder",
+          "$path": "sandbox/"
+        }
+      }
+    }
+  }
+}

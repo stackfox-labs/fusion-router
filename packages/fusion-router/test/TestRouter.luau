@@ -5,9 +5,9 @@ local fusion = createTestFusion()
 
 local function createTestRouter(config, deps)
     local resolvedDeps = deps or {}
-    resolvedDeps.fusion = resolvedDeps.fusion or fusion
+    local routerFusion = resolvedDeps.fusion or fusion
 
-    return createRouter(config, resolvedDeps)
+    return createRouter(config, routerFusion, resolvedDeps)
 end
 
 return {

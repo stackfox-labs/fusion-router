@@ -1,4 +1,5 @@
 local createRouter = require("./TestRouter").createRouter
+local testFusion = require("./TestRouter").fusion
 local Router = require("../src")
 
 local function expectError(callback, expectedMessage)
@@ -127,6 +128,10 @@ return {
         assert(
             router:getCurrentScreen().retention == "singleton",
             "The bootstrapped initial screen should preserve its definition metadata"
+        )
+        assert(
+            Router.create(createConfig(), testFusion)._runtime.fusion == testFusion,
+            "Router.create should accept Fusion as an explicit second argument"
         )
         assert(
             router:getScreenParams() == nil,

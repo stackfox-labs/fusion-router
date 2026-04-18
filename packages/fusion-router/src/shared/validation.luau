@@ -26,6 +26,23 @@ function Validation.expectTableOrNil(subject, value, label, level)
     end
 end
 
+function Validation.expectFusion(subject, value, label, level)
+    Validation.expectTableOrNil(subject, value, label, (level or 1) + 1)
+
+    if value == nil then
+        raise(("%s expected %s to be a Fusion table, got nil"):format(subject, label), level or 1)
+    end
+
+    Validation.expectFunction(subject, value.scoped, ("%s.scoped"):format(label), (level or 1) + 1)
+    Validation.expectFunction(
+        subject,
+        value.doCleanup,
+        ("%s.doCleanup"):format(label),
+        (level or 1) + 1
+    )
+    Validation.expectFunction(subject, value.peek, ("%s.peek"):format(label), (level or 1) + 1)
+end
+
 function Validation.rejectUnknownOptions(subject, options, validOptionNames, level)
     if options == nil then
         return

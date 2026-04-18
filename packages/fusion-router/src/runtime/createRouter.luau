@@ -3,7 +3,6 @@ local Validation = require("../shared/validation")
 local createRuntimeKeyGenerator = require("./keyGenerator")
 local createRouteContext = require("./routeContext")
 local createScopeOwner = require("./scopeOwner")
-local getFusion = require("../shared/getFusion")
 
 local TRANSITION_DURATIONS = {
     fade = 0.18,
@@ -124,11 +123,11 @@ local function getTransitionDuration(presetName)
     return TRANSITION_DURATIONS[presetName] or 0.2
 end
 
-local function createRouter(config, deps: RouterDeps?)
+local function createRouter(config, fusion, deps: RouterDeps?)
     Validation.validateRouterConfig(config)
+    Validation.expectFusion("Router.create", fusion, "fusion", 1)
 
     local resolvedDeps = deps or {}
-    local fusion = resolvedDeps.fusion or getFusion()
     local keyGeneratorFactory = resolvedDeps.createRuntimeKeyGenerator or createRuntimeKeyGenerator
     local keyGenerator = keyGeneratorFactory()
     local routeContextFactory = resolvedDeps.createRouteContext or createRouteContext

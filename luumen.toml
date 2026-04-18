@@ -13,3 +13,4 @@ test = 'lune run test'
 
 [tasks]
 install = ['cd packages/fusion-router && luu install', 'luu install']
+sandbox = ['rojo serve sandbox.project.json']

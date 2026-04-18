@@ -21,6 +21,15 @@ return {
         end, "Router.create expected config to be a table, got nil")
 
         expectError(function()
+            Router.create({
+                initialScreen = "MainMenu",
+                screens = {
+                    MainMenu = Router.screen(noop),
+                },
+            })
+        end, "Router.create expected fusion to be a Fusion table, got nil")
+
+        expectError(function()
             createRouter({
                 initialScreen = "",
                 screens = {},

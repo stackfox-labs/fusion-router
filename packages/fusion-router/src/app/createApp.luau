@@ -1,6 +1,5 @@
 local Validation = require("../shared/validation")
 local TransitionPresets = require("./transitions")
-local getFusion = require("../shared/getFusion")
 
 local function makeScaleUDim2(xScale, yScale)
     if UDim2 ~= nil and type(UDim2.fromScale) == "function" then
@@ -142,60 +141,102 @@ local function createAnimatedStates(scope, entry)
     }
 end
 
-local function routeAttributes(fusion, layerName, entry)
-    local attributes = {}
+local function ensureRouteWrapper(fusion, layerName, entry, layoutOrder)
+    local render = entry._appRender
 
-    if type(fusion.Attribute) == "function" then
-        attributes[fusion.Attribute("RouteKey")] = entry.key
-        attributes[fusion.Attribute("RouteLayer")] = layerName
-        attributes[fusion.Attribute("RouteName")] = entry.name
-        attributes[fusion.Attribute("RouteState")] = entry.state
+    if render == nil then
+        local scope = fusion:scoped()
+        local positionGoal = scope:Value(TransitionPresets.activeStyle().position)
+        local transparencyGoal = scope:Value(TransitionPresets.activeStyle().transparency)
+        local scaleGoal = scope:Value(TransitionPresets.activeStyle().scale)
+        local durationGoal = scope:Value(0)
+        local visibleGoal = scope:Value(true)
+        local layoutOrderGoal = scope:Value(layoutOrder)
+        local routeStateGoal = scope:Value(entry.state)
+        local transitionNameGoal = scope:Value(nil)
+        local transitionPhaseGoal = scope:Value(nil)
+        local tweenInfo = scope:Computed(function(use)
+            return makeTweenInfo(use(durationGoal))
+        end)
 
-        if entry.transition ~= nil then
-            attributes[fusion.Attribute("TransitionName")] = entry.transition.name
-            attributes[fusion.Attribute("TransitionPhase")] = entry.transition.phase
+        local props = {
+            Active = entry.context ~= nil and entry.context.isActive or false,
+            AnchorPoint = makeVector2(0, 0),
+            BackgroundTransparency = 1,
+            GroupTransparency = scope:Tween(transparencyGoal, tweenInfo),
+            LayoutOrder = layoutOrderGoal,
+            Name = ("%s_%s"):format(layerName, entry.name),
+            Position = scope:Tween(positionGoal, tweenInfo),
+            Size = makeScaleUDim2(1, 1),
+            Visible = visibleGoal,
+
+            [fusion.Children] = {
+                scope:New("UIScale")({
+                    Scale = scope:Tween(scaleGoal, tweenInfo),
+                }),
+                entry.instance,
+            },
+        }
+
+        if type(fusion.Attribute) == "function" then
+            props[fusion.Attribute("RouteKey")] = entry.key
+            props[fusion.Attribute("RouteLayer")] = layerName
+            props[fusion.Attribute("RouteName")] = entry.name
+            props[fusion.Attribute("RouteState")] = routeStateGoal
+            props[fusion.Attribute("TransitionName")] = transitionNameGoal
+            props[fusion.Attribute("TransitionPhase")] = transitionPhaseGoal
+        end
+
+        render = {
+            durationGoal = durationGoal,
+            layoutOrderGoal = layoutOrderGoal,
+            positionGoal = positionGoal,
+            routeStateGoal = routeStateGoal,
+            scaleGoal = scaleGoal,
+            scope = scope,
+            transitionNameGoal = transitionNameGoal,
+            transitionPhaseGoal = transitionPhaseGoal,
+            transparencyGoal = transparencyGoal,
+            visibleGoal = visibleGoal,
+            wrapper = scope:New("CanvasGroup")(props),
+        }
+        entry._appRender = render
+
+        if entry.scope ~= nil then
+            table.insert(entry.scope, function()
+                if entry._appRender == render then
+                    entry._appRender = nil
+                end
+
+                scope:doCleanup()
+            end)
         end
     end
 
-    return attributes
-end
-
-local function createRouteWrapper(scope, fusion, layerName, entry, layoutOrder)
-    local Children = fusion.Children
-    local animated = createAnimatedStates(scope, entry)
-    local attributes = routeAttributes(fusion, layerName, entry)
-    local childTree = if entry.instance == nil then {} else { entry.instance }
+    local _, endStyle, duration = resolveStyleForEntry(entry)
     local visible = entry.state ~= "paused" and entry.state ~= "inactive"
 
     if layerName == "overlay" and not entry.isVisible and entry.persistent then
         visible = false
     end
 
-    local props = {
-        Active = entry.context ~= nil and entry.context.isActive or false,
-        AnchorPoint = makeVector2(0, 0),
-        BackgroundTransparency = 1,
-        GroupTransparency = animated.transparency,
-        LayoutOrder = layoutOrder,
-        Name = ("%s_%s"):format(layerName, entry.name),
-        Position = animated.position,
-        Size = makeScaleUDim2(1, 1),
-        Visible = visible,
+    render.durationGoal:set(duration)
+    render.layoutOrderGoal:set(layoutOrder)
+    render.positionGoal:set(endStyle.position)
+    render.routeStateGoal:set(entry.state)
+    render.scaleGoal:set(endStyle.scale)
+    render.transparencyGoal:set(endStyle.transparency)
+    render.visibleGoal:set(visible)
 
-        [Children] = {
-            scope:New("UIScale")({
-                Scale = animated.scale,
-            }),
-            childTree,
-        },
-    }
-
-    for key, value in attributes do
-        props[key] = value
+    if entry.transition ~= nil then
+        render.transitionNameGoal:set(entry.transition.name)
+        render.transitionPhaseGoal:set(entry.transition.phase)
+    else
+        render.transitionNameGoal:set(nil)
+        render.transitionPhaseGoal:set(nil)
     end
 
-    local createCanvasGroup = scope:New("CanvasGroup")
-    return createCanvasGroup(props)
+    return render.wrapper
 end
 
 local function createModalBarrier(scope, fusion, router, entry, layoutOrder)
@@ -259,7 +300,8 @@ local function createApp(scope, router, options)
 
     local fusion = if options ~= nil and options.fusion ~= nil
         then options.fusion
-        else router._runtime.fusion or getFusion()
+        else router._runtime.fusion
+    Validation.expectFusion("Router.App", fusion, "fusion", 1)
     local scheduler = if options ~= nil and options.scheduler ~= nil
         then options.scheduler
         else createDefaultScheduler()
@@ -269,7 +311,7 @@ local function createApp(scope, router, options)
         fusion,
         "FusionRouterScreens",
         1,
-        function(use, innerScope)
+        function(use, _)
             use(router._runtime.version)
 
             local children = {}
@@ -279,7 +321,7 @@ local function createApp(scope, router, options)
                 if entry.isMounted or entry.state == "paused" then
                     table.insert(
                         children,
-                        createRouteWrapper(innerScope, fusion, "screen", entry, layoutOrder)
+                        ensureRouteWrapper(fusion, "screen", entry, layoutOrder)
                     )
                     layoutOrder += 1
                 end
@@ -288,7 +330,7 @@ local function createApp(scope, router, options)
             for _, entry in router._state.exitingScreens do
                 table.insert(
                     children,
-                    createRouteWrapper(innerScope, fusion, "screen", entry, layoutOrder)
+                    ensureRouteWrapper(fusion, "screen", entry, layoutOrder)
                 )
                 layoutOrder += 1
             end
@@ -311,7 +353,7 @@ local function createApp(scope, router, options)
             layoutOrder += 1
             table.insert(
                 children,
-                createRouteWrapper(innerScope, fusion, "modal", entry, layoutOrder)
+                ensureRouteWrapper(fusion, "modal", entry, layoutOrder)
             )
             layoutOrder += 1
         end
@@ -324,7 +366,7 @@ local function createApp(scope, router, options)
             layoutOrder += 1
             table.insert(
                 children,
-                createRouteWrapper(innerScope, fusion, "modal", entry, layoutOrder)
+                ensureRouteWrapper(fusion, "modal", entry, layoutOrder)
             )
             layoutOrder += 1
         end
@@ -337,7 +379,7 @@ local function createApp(scope, router, options)
         fusion,
         "FusionRouterOverlays",
         3,
-        function(use, innerScope)
+        function(use, _)
             use(router._runtime.version)
 
             local children = {}
@@ -347,7 +389,7 @@ local function createApp(scope, router, options)
                 if entry.isMounted then
                     table.insert(
                         children,
-                        createRouteWrapper(innerScope, fusion, "overlay", entry, layoutOrder)
+                        ensureRouteWrapper(fusion, "overlay", entry, layoutOrder)
                     )
                     layoutOrder += 1
                 end

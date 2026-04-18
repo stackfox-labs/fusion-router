@@ -140,7 +140,7 @@ local router = Router.create({
         modalOpen = "fadeScaleIn",
         modalClose = "fadeOut",
     },
-})
+}, Fusion)
 
 local app = Router.App(appScope, router)
 app.Parent = game.Players.LocalPlayer.PlayerGui
